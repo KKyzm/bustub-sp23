@@ -12,6 +12,12 @@
 #include "primer/trie_answer.h"
 #include "trie_debug_answer.h"  // NOLINT
 
+// std::map is a template class,
+// so without explicit instantiation, the compiler is required to instantiate only the methods called in the source
+// this line explicitly instantiate entire std::map<char, std::shared_ptr<const bustub::TrieNode>>
+// for the convenience of debug
+template class std::map<char, std::shared_ptr<const bustub::TrieNode>>;
+
 namespace bustub {
 
 TEST(TrieDebugger, TestCase) {
