@@ -10,6 +10,9 @@ template <class T>
 auto Trie::Get(std::string_view key) const -> const T * {
   // throw NotImplementedException("Trie::Get is not implemented.");
 
+  if (root_ == nullptr) {
+    return nullptr;
+  }
   auto ptr = root_;
   for (auto ch : key) {
     auto children = ptr->children_;
