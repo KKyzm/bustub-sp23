@@ -89,7 +89,7 @@ auto Trie::Remove(std::string_view key) const -> Trie {
   auto ntrie = Trie(ptr);  // new Trie may be returned
 
   auto haskey = RemoveFrom(ptr, key);
-  if (not haskey) {
+  if (!haskey) {
     return *this;
   }
   return ntrie;
@@ -116,7 +116,7 @@ auto Trie::RemoveFrom(std::shared_ptr<TrieNode> ptr, std::string_view key) const
     children[ch] = std::make_shared<TrieNode>(children[ch]->children_);
   }
   // remove node that has no value and children
-  if (children[ch]->children_.empty() and not children[ch]->is_value_node_) {
+  if (children[ch]->children_.empty() && !children[ch]->is_value_node_) {
     children.erase(ch);
   }
 

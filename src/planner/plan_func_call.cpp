@@ -40,7 +40,7 @@ auto Planner::GetFuncCallFromFactory(const std::string &func_name, std::vector<A
   // 2. verify the number of args (should be 1), refer to the test cases for when you should throw an `Excepetion`.
   // 3. return a `StringExpression` std::shared_ptr.
 
-  if (func_name == "lower" or func_name == "upper") {
+  if (func_name == "lower" || func_name == "upper") {
     if (args.size() != 1) {
       throw Exception(fmt::format("func call {} #args is {}", func_name, args.size()));
     }
