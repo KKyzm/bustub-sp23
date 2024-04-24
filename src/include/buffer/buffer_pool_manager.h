@@ -53,8 +53,6 @@ class BufferPoolManager {
   auto GetPages() -> Page * { return pages_; }
 
   /**
-   * TODO(P1): Add implementation
-   *
    * @brief Create a new page in the buffer pool. Set page_id to the new page's id, or nullptr if all frames
    * are currently in use and not evictable (in another word, pinned).
    *
@@ -86,8 +84,6 @@ class BufferPoolManager {
   auto NewPageGuarded(page_id_t *page_id) -> BasicPageGuard;
 
   /**
-   * TODO(P1): Add implementation
-   *
    * @brief Fetch the requested page from the buffer pool. Return nullptr if page_id needs to be fetched from the disk
    * but all frames are currently in use and not evictable (in another word, pinned).
    *
@@ -122,8 +118,6 @@ class BufferPoolManager {
   auto FetchPageWrite(page_id_t page_id) -> WritePageGuard;
 
   /**
-   * TODO(P1): Add implementation
-   *
    * @brief Unpin the target page from the buffer pool. If page_id is not in the buffer pool or its pin count is already
    * 0, return false.
    *
@@ -138,8 +132,6 @@ class BufferPoolManager {
   auto UnpinPage(page_id_t page_id, bool is_dirty, AccessType access_type = AccessType::Unknown) -> bool;
 
   /**
-   * TODO(P1): Add implementation
-   *
    * @brief Flush the target page to disk.
    *
    * Use the DiskManager::WritePage() method to flush a page to disk, REGARDLESS of the dirty flag.
@@ -151,15 +143,11 @@ class BufferPoolManager {
   auto FlushPage(page_id_t page_id) -> bool;
 
   /**
-   * TODO(P1): Add implementation
-   *
    * @brief Flush all the pages in the buffer pool to disk.
    */
   void FlushAllPages();
 
   /**
-   * TODO(P1): Add implementation
-   *
    * @brief Delete a page from the buffer pool. If page_id is not in the buffer pool, do nothing and return true. If the
    * page is pinned and cannot be deleted, return false immediately.
    *
@@ -191,7 +179,7 @@ class BufferPoolManager {
   /** List of free frames that don't have any pages on them. */
   std::list<frame_id_t> free_list_;
   /** This latch protects shared data structures. We recommend updating this comment to describe what it protects. */
-  std::mutex latch_;
+  std::mutex buffer_pool_latch_;
 
   /**
    * @brief Allocate a page on disk. Caller should acquire the latch before calling this function.
@@ -208,5 +196,14 @@ class BufferPoolManager {
   }
 
   // TODO(student): You may add additional private members and helper functions
+
+  /**
+   * @brief Return a free frame from either the free list or the replacer (always find from the free list first).
+   * And reset all metadata of returned page and, if replacer yeild a frame having dirty page, flush the page.
+   *
+   * @param[out] frame_id id of free frame that is picked.
+   * @return true if a free frame is picked successfully, false if no free frames found.
+   */
+  auto GetFreeFrame(frame_id_t *frame_id) -> bool;
 };
 }  // namespace bustub

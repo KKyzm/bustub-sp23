@@ -15,8 +15,7 @@ class BasicPageGuard {
   BasicPageGuard(const BasicPageGuard &) = delete;
   auto operator=(const BasicPageGuard &) -> BasicPageGuard & = delete;
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Move constructor for BasicPageGuard
    *
    * When you call BasicPageGuard(std::move(other_guard)), you
@@ -27,8 +26,7 @@ class BasicPageGuard {
    */
   BasicPageGuard(BasicPageGuard &&that) noexcept;
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Drop a page guard
    *
    * Dropping a page guard should clear all contents
@@ -38,8 +36,7 @@ class BasicPageGuard {
    */
   void Drop();
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Move assignment for BasicPageGuard
    *
    * Similar to a move constructor, except that the move
@@ -50,8 +47,7 @@ class BasicPageGuard {
    */
   auto operator=(BasicPageGuard &&that) noexcept -> BasicPageGuard &;
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Destructor for BasicPageGuard
    *
    * When a page guard goes out of scope, it should behave as if
@@ -94,8 +90,7 @@ class ReadPageGuard {
   ReadPageGuard(const ReadPageGuard &) = delete;
   auto operator=(const ReadPageGuard &) -> ReadPageGuard & = delete;
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Move constructor for ReadPageGuard
    *
    * Very similar to BasicPageGuard. You want to create
@@ -104,8 +99,7 @@ class ReadPageGuard {
    */
   ReadPageGuard(ReadPageGuard &&that) noexcept;
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Move assignment for ReadPageGuard
    *
    * Very similar to BasicPageGuard. Given another ReadPageGuard,
@@ -113,8 +107,7 @@ class ReadPageGuard {
    */
   auto operator=(ReadPageGuard &&that) noexcept -> ReadPageGuard &;
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Drop a ReadPageGuard
    *
    * ReadPageGuard's Drop should behave similarly to BasicPageGuard,
@@ -124,8 +117,7 @@ class ReadPageGuard {
    */
   void Drop();
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Destructor for ReadPageGuard
    *
    * Just like with BasicPageGuard, this should behave
@@ -143,7 +135,6 @@ class ReadPageGuard {
   }
 
  private:
-  // You may choose to get rid of this and add your own private variables.
   BasicPageGuard guard_;
 };
 
@@ -154,8 +145,7 @@ class WritePageGuard {
   WritePageGuard(const WritePageGuard &) = delete;
   auto operator=(const WritePageGuard &) -> WritePageGuard & = delete;
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Move constructor for WritePageGuard
    *
    * Very similar to BasicPageGuard. You want to create
@@ -164,8 +154,7 @@ class WritePageGuard {
    */
   WritePageGuard(WritePageGuard &&that) noexcept;
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Move assignment for WritePageGuard
    *
    * Very similar to BasicPageGuard. Given another WritePageGuard,
@@ -173,8 +162,7 @@ class WritePageGuard {
    */
   auto operator=(WritePageGuard &&that) noexcept -> WritePageGuard &;
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Drop a WritePageGuard
    *
    * WritePageGuard's Drop should behave similarly to BasicPageGuard,
@@ -184,8 +172,7 @@ class WritePageGuard {
    */
   void Drop();
 
-  /** TODO(P1): Add implementation
-   *
+  /**
    * @brief Destructor for WritePageGuard
    *
    * Just like with BasicPageGuard, this should behave
@@ -210,7 +197,6 @@ class WritePageGuard {
   }
 
  private:
-  // You may choose to get rid of this and add your own private variables.
   BasicPageGuard guard_;
 };
 
