@@ -136,6 +136,7 @@ class ReadPageGuard {
 
  private:
   BasicPageGuard guard_;
+  bool dropped_{false};
 };
 
 class WritePageGuard {
@@ -198,6 +199,7 @@ class WritePageGuard {
 
  private:
   BasicPageGuard guard_;
+  bool dropped_{false};
 };
 
 }  // namespace bustub

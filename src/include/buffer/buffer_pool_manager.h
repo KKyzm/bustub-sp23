@@ -70,8 +70,6 @@ class BufferPoolManager {
   auto NewPage(page_id_t *page_id) -> Page *;
 
   /**
-   * TODO(P1): Add implementation
-   *
    * @brief PageGuard wrapper for NewPage
    *
    * Functionality should be the same as NewPage, except that
@@ -101,8 +99,6 @@ class BufferPoolManager {
   auto FetchPage(page_id_t page_id, AccessType access_type = AccessType::Unknown) -> Page *;
 
   /**
-   * TODO(P1): Add implementation
-   *
    * @brief PageGuard wrappers for FetchPage
    *
    * Functionality should be the same as FetchPage, except

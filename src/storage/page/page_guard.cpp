@@ -4,12 +4,12 @@
 namespace bustub {
 
 BasicPageGuard::BasicPageGuard(BasicPageGuard &&that) noexcept {
-  this->bpm_ = that.bpm_;
-  this->page_ = that.page_;
-  this->is_dirty_ = that.is_dirty_;
-  this->bpm_ = nullptr;
-  this->page_ = nullptr;
-  this->is_dirty_ = false;
+  bpm_ = that.bpm_;
+  page_ = that.page_;
+  is_dirty_ = that.is_dirty_;
+  that.bpm_ = nullptr;
+  that.page_ = nullptr;
+  that.is_dirty_ = false;
 }
 
 void BasicPageGuard::Drop() {
@@ -17,42 +17,68 @@ void BasicPageGuard::Drop() {
     return;
   }
   bpm_->UnpinPage(page_->GetPageId(), is_dirty_);
+  bpm_ = nullptr;
+  page_ = nullptr;
+  is_dirty_ = false;
 }
 
 auto BasicPageGuard::operator=(BasicPageGuard &&that) noexcept -> BasicPageGuard & {
-  this->bpm_ = that.bpm_;
-  this->page_ = that.page_;
-  this->is_dirty_ = that.is_dirty_;
-  this->bpm_ = nullptr;
-  this->page_ = nullptr;
-  this->is_dirty_ = false;
+  Drop();
+  bpm_ = that.bpm_;
+  page_ = that.page_;
+  is_dirty_ = that.is_dirty_;
+  that.bpm_ = nullptr;
+  that.page_ = nullptr;
+  that.is_dirty_ = false;
   return *this;
 }
 
-BasicPageGuard::~BasicPageGuard() { Drop(); };
+BasicPageGuard::~BasicPageGuard() { Drop(); }
 
-ReadPageGuard::ReadPageGuard(ReadPageGuard &&that) noexcept = default;
+ReadPageGuard::ReadPageGuard(ReadPageGuard &&that) noexcept {
+  guard_ = std::move(that.guard_);
+  dropped_ = that.dropped_;
+  that.dropped_ = true;
+}
 
 auto ReadPageGuard::operator=(ReadPageGuard &&that) noexcept -> ReadPageGuard & {
-  this->guard_ = std::move(that.guard_);
+  Drop();
+  guard_ = std::move(that.guard_);
+  dropped_ = that.dropped_;
+  that.dropped_ = true;
   return *this;
 }
 
 void ReadPageGuard::Drop() {
+  if (dropped_) {
+    return;
+  }
+  dropped_ = true;
   guard_.page_->RUnlatch();
   guard_.Drop();
 }
 
 ReadPageGuard::~ReadPageGuard() { Drop(); }
 
-WritePageGuard::WritePageGuard(WritePageGuard &&that) noexcept = default;
+WritePageGuard::WritePageGuard(WritePageGuard &&that) noexcept {
+  guard_ = std::move(that.guard_);
+  dropped_ = that.dropped_;
+  that.dropped_ = true;
+}
 
 auto WritePageGuard::operator=(WritePageGuard &&that) noexcept -> WritePageGuard & {
-  this->guard_ = std::move(that.guard_);
+  Drop();
+  guard_ = std::move(that.guard_);
+  dropped_ = that.dropped_;
+  that.dropped_ = true;
   return *this;
 }
 
 void WritePageGuard::Drop() {
+  if (dropped_) {
+    return;
+  }
+  dropped_ = true;
   guard_.page_->WUnlatch();
   guard_.Drop();
 }

@@ -48,9 +48,6 @@ class LRUKNode {
 class LRUKReplacer {
  public:
   /**
-   *
-   * TODO(P1): Add implementation
-   *
    * @brief a new LRUKReplacer.
    * @param num_frames the maximum number of frames the LRUReplacer will be required to store
    */
@@ -135,24 +132,24 @@ class LRUKReplacer {
    *
    * @return size_t
    */
-  auto Size() -> size_t;
+  auto Size() const -> size_t;
 
  private:
   std::unordered_map<frame_id_t, LRUKNode> node_store_;
-  std::chrono::high_resolution_clock::time_point begin_timestamp_{};
-  size_t curr_size_{0};
+  size_t curr_size_{0};  // the number of evictable frames
 
   const size_t replacer_size_;
   const size_t k_;
+  const std::chrono::high_resolution_clock::time_point begin_timestamp_{};
 
-  std::mutex lrukreplacer_latch_;
+  std::mutex lru_k_replacer_latch_;
 
   /**
    * @brief Ensure frame id is valid, otherwise throw an exception.
    *
    * @param frame_id id to be checked
    */
-  void EnsureFrameIdValid(frame_id_t frame_id);
+  void EnsureFrameIdValid(frame_id_t frame_id) const;
 
   /**
    * @brief Check if given frame id has already been recorded.
@@ -160,14 +157,14 @@ class LRUKReplacer {
    * @param frame_id id to be checked
    * @return true if given frame id has already been recorded, false otherwise
    */
-  auto HaveFrameId(frame_id_t frame_id) -> bool;
+  auto HaveFrameId(frame_id_t frame_id) const -> bool;
 
   /**
    * @brief Return milliseconds since unix epoch as current timestamp
    *
    * @return size_t
    */
-  auto CurrentTimeStamp() -> size_t;
+  auto CurrentTimeStamp() const -> size_t;
 };
 
 }  // namespace bustub
