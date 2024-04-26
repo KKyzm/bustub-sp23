@@ -144,4 +144,93 @@ TEST(BufferPoolManagerTest, SampleTest) {
   delete disk_manager;
 }
 
+TEST(BufferPoolManagerTest, FetchPageTest) {
+  const std::string db_name = "test.db";
+  const size_t buffer_pool_size = 4;
+  const size_t k = 2;
+
+  auto *disk_manager = new DiskManager(db_name);
+  auto *bpm = new BufferPoolManager(buffer_pool_size, disk_manager, k);
+
+  page_id_t page_id_temp;
+
+  // The buffer pool is empty. We should be able to create a new page.
+  auto *page0 = bpm->NewPage(&page_id_temp);
+  ASSERT_NE(nullptr, page0);
+  ASSERT_EQ(0, page_id_temp);
+  bpm->FlushPage(0);
+
+  // Another thread use page 0.
+  ASSERT_EQ(page0, bpm->FetchPage(0));
+
+  // Now the pin number of page 0 is 2, so we should unpin twice to successfully delete this page.
+  ASSERT_EQ(false, bpm->DeletePage(0));
+  bpm->UnpinPage(0, false);
+  ASSERT_EQ(false, bpm->DeletePage(0));
+  bpm->UnpinPage(0, false);
+  ASSERT_EQ(true, bpm->DeletePage(0));
+
+  // Now buffer pool is empty.
+  // Fill it up.
+  bpm->NewPage(&page_id_temp);
+  ASSERT_EQ(1, page_id_temp);
+  bpm->NewPage(&page_id_temp);
+  ASSERT_EQ(2, page_id_temp);
+  bpm->NewPage(&page_id_temp);
+  ASSERT_EQ(3, page_id_temp);
+  bpm->NewPage(&page_id_temp);
+  ASSERT_EQ(4, page_id_temp);
+
+  // Page 0 should be fetched from disk, but the buffer pool is full and all pages are pinned, so nullptr is returned.
+  ASSERT_EQ(nullptr, bpm->FetchPage(0));
+
+  // Unpin page 3, now the buffer pool is able to fetch page 0.
+  ASSERT_EQ(true, bpm->UnpinPage(3, false));
+  ASSERT_EQ(false, bpm->UnpinPage(3, false));
+  ASSERT_NE(nullptr, bpm->FetchPage(0));
+
+  // Shutdown the disk manager and remove the temporary file we created.
+  disk_manager->ShutDown();
+  remove("test.db");
+
+  delete bpm;
+  delete disk_manager;
+}
+
+TEST(BufferPoolManagerTest, DeletePageTest) {
+  const std::string db_name = "test.db";
+  const size_t buffer_pool_size = 4;
+  const size_t k = 2;
+
+  auto *disk_manager = new DiskManager(db_name);
+  auto *bpm = new BufferPoolManager(buffer_pool_size, disk_manager, k);
+
+  page_id_t page_id_temp;
+
+  // The buffer pool is empty. We should be able to create a new page.
+  auto *page0 = bpm->NewPage(&page_id_temp);
+  ASSERT_NE(nullptr, page0);
+  ASSERT_EQ(0, page_id_temp);
+
+  // Once we have a page, we should be able to read and write content.
+  snprintf(page0->GetData(), BUSTUB_PAGE_SIZE, "Hello");
+  ASSERT_EQ(0, strcmp(page0->GetData(), "Hello"));
+
+  // Flush and delete page 0.
+  ASSERT_EQ(true, bpm->UnpinPage(0, true));
+  ASSERT_EQ(true, bpm->DeletePage(0));
+
+  // Fetch page0 from disk, we should be able to read same content.
+  page0 = bpm->FetchPage(0);
+  ASSERT_NE(nullptr, page0);
+  snprintf(page0->GetData(), BUSTUB_PAGE_SIZE, "Hello");
+  ASSERT_EQ(0, strcmp(page0->GetData(), "Hello"));
+
+  // Shutdown the disk manager and remove the temporary file we created.
+  disk_manager->ShutDown();
+  remove("test.db");
+
+  delete bpm;
+  delete disk_manager;
+}
 }  // namespace bustub
