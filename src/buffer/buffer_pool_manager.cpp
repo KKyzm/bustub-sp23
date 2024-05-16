@@ -170,6 +170,18 @@ auto BufferPoolManager::FetchPageWrite(page_id_t page_id) -> WritePageGuard {
 
 auto BufferPoolManager::NewPageGuarded(page_id_t *page_id) -> BasicPageGuard { return {this, NewPage(page_id)}; }
 
+auto BufferPoolManager::NewPageGuardedRead(page_id_t *page_id) -> ReadPageGuard {
+  auto *page = NewPage(page_id);
+  page->RLatch();
+  return {this, page};
+}
+
+auto BufferPoolManager::NewPageGuardedWrite(page_id_t *page_id) -> WritePageGuard {
+  auto *page = NewPage(page_id);
+  page->WLatch();
+  return {this, page};
+}
+
 auto BufferPoolManager::GetFreeFrame(frame_id_t *frame_id) -> bool {
   if (!free_list_.empty()) {  // try get a free frame from free list
     *frame_id = free_list_.front();

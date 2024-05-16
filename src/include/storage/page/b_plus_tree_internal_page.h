@@ -54,14 +54,17 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   auto KeyAt(int index) const -> KeyType;
 
   /**
-   *
    * @param index The index of the key to set. Index must be non-zero.
    * @param key The new value for key
    */
   void SetKeyAt(int index, const KeyType &key);
 
   /**
-   *
+   * @brief Insert given entry
+   */
+  auto InsertAt(int index, const KeyType &key, const ValueType &value) -> bool;
+
+  /**
    * @param value the value to search for
    */
   auto ValueIndex(const ValueType &value) const -> int;

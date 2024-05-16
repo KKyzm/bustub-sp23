@@ -80,6 +80,8 @@ class BufferPoolManager {
    * @return BasicPageGuard holding a new page
    */
   auto NewPageGuarded(page_id_t *page_id) -> BasicPageGuard;
+  auto NewPageGuardedRead(page_id_t *page_id) -> ReadPageGuard;
+  auto NewPageGuardedWrite(page_id_t *page_id) -> WritePageGuard;
 
   /**
    * @brief Fetch the requested page from the buffer pool. Return nullptr if page_id needs to be fetched from the disk

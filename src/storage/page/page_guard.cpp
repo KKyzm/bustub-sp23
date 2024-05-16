@@ -54,7 +54,9 @@ void ReadPageGuard::Drop() {
     return;
   }
   dropped_ = true;
-  guard_.page_->RUnlatch();
+  if (guard_.page_ != nullptr) {
+    guard_.page_->RUnlatch();
+  }
   guard_.Drop();
 }
 

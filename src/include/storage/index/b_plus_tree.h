@@ -26,6 +26,7 @@
 #include "storage/page/b_plus_tree_header_page.h"
 #include "storage/page/b_plus_tree_internal_page.h"
 #include "storage/page/b_plus_tree_leaf_page.h"
+#include "storage/page/b_plus_tree_page.h"
 #include "storage/page/page_guard.h"
 
 namespace bustub {
@@ -82,7 +83,9 @@ class BPlusTree {
   auto GetValue(const KeyType &key, std::vector<ValueType> *result, Transaction *txn = nullptr) -> bool;
 
   // Return the page id of the root node
-  auto GetRootPageId() -> page_id_t;
+  auto GetRootPageId() const -> page_id_t;
+
+  void SetRootPageId(page_id_t page_id);
 
   // Index iterator
   auto Begin() -> INDEXITERATOR_TYPE;
@@ -122,6 +125,8 @@ class BPlusTree {
 
   void PrintTree(page_id_t page_id, const BPlusTreePage *page);
 
+  auto IsLeafPage(page_id_t page_id) const -> bool;
+
   /**
    * @brief Convert A B+ tree into a Printable B+ tree
    *
@@ -129,6 +134,51 @@ class BPlusTree {
    * @return PrintableNode
    */
   auto ToPrintableBPlusTree(page_id_t root_id) -> PrintableBPlusTree;
+
+  /**
+   * @brief Find child page that key should locate at.
+   *
+   * @param page The InternalPage to traverse through to find corrent child page.
+   * @param key
+   * @return page_id_t Page id of found page.
+   */
+  auto FindChild(const InternalPage *page, const KeyType &key) -> page_id_t;
+
+  /**
+   * @brief Get the leaf page as ReadPageGuard using Basic Latch Crabbing Protocal.
+   * Start at the root and go down, repeatedly acquire READ latch on the child and then unlatch parent.
+   *
+   * @param key Target key to search
+   * @param[out] ctx Context that keeps track of the pages that is accessing.
+   */
+  void BasicCrabbingSearch(const KeyType &key, Context *ctx);
+
+  // define operation type in B+tree
+  enum class OperationType { Others = 0, Insertion, Deletion };
+
+  /**
+   * @brief Get the leaf page as WritePageGuard optimisticly using Improved Latch Crabbing Protocal.
+   * Set READ latches as BasicCrabbingSearch do, go to leaf, and set WRITE latch on leaf. If the leaf is not safe,
+   * release all previous latches and return false.
+   *
+   * @param key Target key to search
+   * @param[out] ctx Context that keeps track of the pages that is accessing.
+   *
+   * @return Leaf page is safe or not
+   */
+  auto CrabbingSearchOptimistic(const KeyType &key, Context *ctx, OperationType op_type) -> bool;
+
+  /**
+   * @brief Get the leaf page as WritePageGuard pessimisticly using Improved Latch Crabbing Protocal.
+   * Start at the root and go down, obtaining X WRITE latches as needed. Once the child is latched, check if it is safe.
+   * If the child is safe, release latches on all its ancestors.
+   *
+   * @param key Target key to search
+   * @param[out] ctx Context that keeps track of the pages that is accessing.
+   */
+  void CrabbingSearchPessimistic(const KeyType &key, Context *ctx, OperationType op_type);
+
+  void InsertIntoInternalPage(Context *ctx, const KeyType &key, page_id_t page_id);
 
   // member variable
   std::string index_name_;
