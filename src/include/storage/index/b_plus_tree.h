@@ -43,7 +43,10 @@ class Context {
  public:
   // When you insert into / remove from the B+ tree, store the write guard of header page here.
   // Remember to drop the header page guard and set it to nullopt when you want to unlock all.
-  std::optional<WritePageGuard> header_page_{std::nullopt};
+  std::optional<WritePageGuard> header_page_write_{std::nullopt};
+
+  // When you insert read from the B+ tree, store the read guard of header page here.
+  std::optional<ReadPageGuard> header_page_read_{std::nullopt};
 
   // Save the root page id here so that it's easier to know if the current page is the root page.
   page_id_t root_page_id_{INVALID_PAGE_ID};
@@ -55,6 +58,33 @@ class Context {
   std::deque<ReadPageGuard> read_set_;
 
   auto IsRootPage(page_id_t page_id) -> bool { return page_id == root_page_id_; }
+
+  auto ToString() -> std::string {
+    std::string out = "Context info:\n\t";
+    if (header_page_write_.has_value()) {
+      out += fmt::format("head page {} with write guard\n\t", header_page_write_->PageId());
+    }
+    if (header_page_read_.has_value()) {
+      out += fmt::format("head page {} with read guard\n\t", header_page_read_->PageId());
+    }
+    out += "root page ";
+    if (root_page_id_ == INVALID_PAGE_ID) {
+      out += "INVALID_PAGE_ID\n\t";
+    } else {
+      out += std::to_string(root_page_id_) + "\n\t";
+    }
+    out += "write page guard set (page ids):\t";
+    for (auto &guard : write_set_) {
+      out += std::to_string(guard.PageId()) += " ";
+    }
+    out += "\n\t";
+    out += "read page guard set (page ids):\t";
+    for (auto &guard : read_set_) {
+      out += std::to_string(guard.PageId()) += " ";
+    }
+
+    return out;
+  }
 };
 
 #define BPLUSTREE_TYPE BPlusTree<KeyType, ValueType, KeyComparator>
@@ -85,7 +115,7 @@ class BPlusTree {
   // Return the page id of the root node
   auto GetRootPageId() const -> page_id_t;
 
-  void SetRootPageId(page_id_t page_id);
+  void SetRootPageId(Context *ctx, page_id_t page_id);
 
   // Index iterator
   auto Begin() -> INDEXITERATOR_TYPE;
@@ -154,7 +184,7 @@ class BPlusTree {
   void BasicCrabbingSearch(const KeyType &key, Context *ctx);
 
   // define operation type in B+tree
-  enum class OperationType { Others = 0, Insertion, Deletion };
+  enum class OperationType { Insertion, Deletion };
 
   /**
    * @brief Get the leaf page as WritePageGuard optimisticly using Improved Latch Crabbing Protocal.
@@ -166,7 +196,8 @@ class BPlusTree {
    *
    * @return Leaf page is safe or not
    */
-  auto CrabbingSearchOptimistic(const KeyType &key, Context *ctx, OperationType op_type) -> bool;
+  [[deprecated("Optimistic way is not complete, use pessimistic way.")]] auto CrabbingSearchOptimistic(
+      const KeyType &key, Context *ctx, OperationType op_type) -> bool;
 
   /**
    * @brief Get the leaf page as WritePageGuard pessimisticly using Improved Latch Crabbing Protocal.
@@ -178,7 +209,70 @@ class BPlusTree {
    */
   void CrabbingSearchPessimistic(const KeyType &key, Context *ctx, OperationType op_type);
 
+  void CrabbingSearchConservative(const KeyType &key, Context *ctx);
+
+  /**
+   * @brief Insert a new key-value pair into Internal Page
+   *
+   * @param ctx Pointer to Context object contains page guard of the internal page to be inserted
+   * @param key
+   * @param page_id
+   */
   void InsertIntoInternalPage(Context *ctx, const KeyType &key, page_id_t page_id);
+
+  // tools to deduce value type for given page type
+  template <typename T>
+  struct page_value_t;
+
+  // for LeafPage, value type is specified in template parameter
+  template <>
+  struct page_value_t<LeafPage> {
+    using type = ValueType;
+  };
+
+  // for InternalPage, value type is page_id_t
+  template <>
+  struct page_value_t<InternalPage> {
+    using type = page_id_t;
+  };
+
+  /**
+   * @brief Redistribute OR Merge leaf pages to make all of them at least half full.
+   *
+   * @param parent_page_guard Pointer to page guard of parent page of the starving leaf page
+   * @starving_page_guard Pointer to page guard of the child page that is not half full
+   */
+  template <typename ChildPageType>
+  auto RedisOrMergeChildPage(WritePageGuard *parent_page_guard, WritePageGuard *starving_page_guard) -> page_id_t;
+
+  /**
+   * @brief Redistribute entries among leaf pages to make all of them at least half full.
+   *
+   * @param parent_page_guard Pointer to page guard of parent page of the leaf pages to be redistributed
+   * @starving_page_guard Pointer to page guard of the child page that is not half full
+   */
+  template <typename StarvingPageType>
+  [[deprecated("use RedisOrMergeChildPage instead")]] auto RedistributeChildPage(WritePageGuard *parent_page_guard,
+                                                                                 WritePageGuard *starving_page_guard)
+      -> bool;
+
+  /**
+   * @brief Merge target page to its sibling page
+   *
+   * @param parent_page_guard Pointer to WritePageGuard of parent page of target page
+   * @param merged_page_guard Pointer to WritePageGuard of target page
+   */
+  [[deprecated("use RedisOrMergeChildPage instead")]] auto MergeChildPage(WritePageGuard *parent_page_guard,
+                                                                          WritePageGuard *merged_page_guard)
+      -> page_id_t;
+
+  /**
+   * @brief Remove an entry from internal page that points to given page.
+   *
+   * @param ctx Pointer to Context object contains page guard of the internal page to remove from
+   * @param page_id
+   */
+  void RemoveFromInternalPage(Context *ctx, page_id_t page_id);
 
   // member variable
   std::string index_name_;

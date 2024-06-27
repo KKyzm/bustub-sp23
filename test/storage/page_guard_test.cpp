@@ -162,22 +162,22 @@ TEST(PageGuardTest, BPMTest_0) {
 
   page_id_t page_id_temp;
   auto guarded_page = bpm->NewPageGuarded(&page_id_temp);
-  auto* page0copy = bpm->FetchPage(page_id_temp);
+  auto *page0copy = bpm->FetchPage(page_id_temp);
   bpm->UnpinPage(page0copy->GetPageId(), false);
   EXPECT_EQ(1, page0copy->GetPinCount());
-  
+
   auto fetched_guarded_page0_0 = bpm->FetchPageRead(page_id_temp);
   EXPECT_EQ(2, page0copy->GetPinCount());
 
   auto fetched_guarded_page0_1 = bpm->FetchPageRead(page_id_temp);
   EXPECT_EQ(3, page0copy->GetPinCount());
-  
+
   auto moved_0 = std::move(fetched_guarded_page0_0);
   EXPECT_EQ(3, page0copy->GetPinCount());
 
   auto moved_1 = ReadPageGuard(std::move(fetched_guarded_page0_1));
   EXPECT_EQ(3, page0copy->GetPinCount());
-  
+
   fetched_guarded_page0_0.Drop();
   EXPECT_EQ(3, page0copy->GetPinCount());
   fetched_guarded_page0_0.Drop();
@@ -188,7 +188,7 @@ TEST(PageGuardTest, BPMTest_0) {
   EXPECT_EQ(3, page0copy->GetPinCount());
   unuseful.Drop();
   EXPECT_EQ(3, page0copy->GetPinCount());
-  
+
   moved_0.Drop();
   EXPECT_EQ(2, page0copy->GetPinCount());
   moved_1.Drop();
@@ -208,16 +208,16 @@ TEST(PageGuardTest, BPMTest_1) {
 
   page_id_t page_id_temp;
   auto guarded_page = bpm->NewPageGuarded(&page_id_temp);
-  auto* page0copy = bpm->FetchPage(page_id_temp);
+  auto *page0copy = bpm->FetchPage(page_id_temp);
   bpm->UnpinPage(page_id_temp, false);
   EXPECT_EQ(1, page0copy->GetPinCount());
-  
+
   auto fetched0 = bpm->FetchPageRead(page_id_temp);
   EXPECT_EQ(2, page0copy->GetPinCount());
-  
+
   auto fetched1 = bpm->FetchPageRead(page_id_temp);
   EXPECT_EQ(3, page0copy->GetPinCount());
-  
+
   // a deadlock is expected to occur
   // auto fetched2 = bpm->FetchPageWrite(page_id_temp);
 

@@ -15,6 +15,7 @@
 #include "common/exception.h"
 #include "common/rid.h"
 #include "storage/page/b_plus_tree_leaf_page.h"
+#include "storage/page/b_plus_tree_page.h"
 #include "type/value.h"
 
 namespace bustub {
@@ -31,6 +32,9 @@ INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_LEAF_PAGE_TYPE::Init(int max_size) {
   SetPageType(IndexPageType::LEAF_PAGE);
   SetSize(0);
+  if (max_size > static_cast<int>(LEAF_PAGE_SIZE)) {
+    max_size = LEAF_PAGE_SIZE;
+  }
   SetMaxSize(max_size);
   SetNextPageId(INVALID_PAGE_ID);
 }
@@ -72,6 +76,17 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::InsertAt(int index, const KeyType &key, const V
   array_[index] = std::make_pair(key, value);
   IncreaseSize(1);
   return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::DeleteAt(int index) {
+  if (GetSize() == 0) {
+    return;
+  }
+  for (int i = index + 1; i < GetSize(); i++) {
+    array_[i - 1] = std::move(array_[i]);
+  }
+  IncreaseSize(-1);
 }
 
 template class BPlusTreeLeafPage<GenericKey<4>, RID, GenericComparator<4>>;

@@ -10,6 +10,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "storage/page/b_plus_tree_page.h"
+#include <cmath>
 
 namespace bustub {
 
@@ -36,8 +37,8 @@ void BPlusTreePage::SetMaxSize(int size) { max_size_ = size; }
 
 /*
  * Helper method to get min page size
- * Generally, min page size == max page size / 2
+ * Generally, min page size == ceil (max page size / 2)
  */
-auto BPlusTreePage::GetMinSize() const -> int { return max_size_ / 2; }
+auto BPlusTreePage::GetMinSize() const -> int { return std::ceil(max_size_ / 2.0); }
 
 }  // namespace bustub

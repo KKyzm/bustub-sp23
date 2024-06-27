@@ -41,6 +41,7 @@ set(BUSTUB_THIRDPARTY_LIBS
         fmt
         libfort::fort
         Threads::Threads
+        spdlog::spdlog
         )
 
 target_link_libraries(

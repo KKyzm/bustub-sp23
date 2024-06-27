@@ -88,16 +88,6 @@ TEST(BPlusTreeTests, InsertTest2) {
   }
 
   std::vector<RID> rids;
-  for (auto key : keys) {
-    rids.clear();
-    index_key.SetFromInteger(key);
-    tree.GetValue(index_key, &rids);
-    EXPECT_EQ(rids.size(), 1);
-
-    int64_t value = key & 0xFFFFFFFF;
-    EXPECT_EQ(rids[0].GetSlotNum(), value);
-  }
-
   int64_t size = 0;
   bool is_present;
 
@@ -109,7 +99,7 @@ TEST(BPlusTreeTests, InsertTest2) {
     EXPECT_EQ(is_present, true);
     EXPECT_EQ(rids.size(), 1);
     EXPECT_EQ(rids[0].GetPageId(), 0);
-    EXPECT_EQ(rids[0].GetSlotNum(), key);
+    EXPECT_EQ(rids[0].GetSlotNum(), key & 0xFFFFFFFF);
     size = size + 1;
   }
 

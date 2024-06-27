@@ -27,6 +27,9 @@ INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_INTERNAL_PAGE_TYPE::Init(int max_size) {
   SetPageType(IndexPageType::INTERNAL_PAGE);
   SetSize(0);
+  if (max_size > static_cast<int>(INTERNAL_PAGE_SIZE)) {
+    max_size = INTERNAL_PAGE_SIZE;
+  }
   SetMaxSize(max_size);
 }
 /*
@@ -68,6 +71,17 @@ auto B_PLUS_TREE_INTERNAL_PAGE_TYPE::InsertAt(int index, const KeyType &key, con
   array_[index] = std::make_pair(key, value);
   IncreaseSize(1);
   return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_INTERNAL_PAGE_TYPE::DeleteAt(int index) {
+  if (GetSize() == 0) {
+    return;
+  }
+  for (int i = index + 1; i < GetSize(); i++) {
+    array_[i - 1] = std::move(array_[i]);
+  }
+  IncreaseSize(-1);
 }
 
 // valuetype for internalNode should be page id_t

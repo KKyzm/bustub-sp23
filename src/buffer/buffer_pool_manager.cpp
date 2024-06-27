@@ -14,6 +14,7 @@
 #include "common/config.h"
 #include "common/exception.h"
 #include "common/macros.h"
+// #include "spdlog/spdlog.h"
 #include "storage/page/page.h"
 #include "storage/page/page_guard.h"
 
@@ -62,14 +63,16 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
   auto guard = std::scoped_lock(buffer_pool_latch_);
   if (page_table_.find(page_id) != page_table_.end()) {
     // find target page in memory pool
+    //    spdlog::debug("BufferPoolManager: find target page {} at buffer pool", page_id);
     auto frame_id = page_table_.at(page_id);
     page = &pages_[frame_id];
     page->pin_count_++;  // update pin count
     BUSTUB_ASSERT(page_id == page->GetPageId(), "Page table should have consistent record");
   } else {
-    // didn't find target page in memory pool, get a free frame and read page from disk
+    //    spdlog::debug("BufferPoolManager: didn't find target page {} in buffer pool, try read it from disk", page_id);
     auto frame_id = frame_id_t{};
     if (GetFreeFrame(&frame_id)) {
+      //      spdlog::debug("BufferPoolManager: succeed to get a free frame");
       page = &pages_[frame_id];
       page_table_.insert({page_id, frame_id});  // update page table
 
@@ -78,6 +81,8 @@ auto BufferPoolManager::FetchPage(page_id_t page_id, [[maybe_unused]] AccessType
       page->page_id_ = page_id;
       page->pin_count_ = 1;
       page->is_dirty_ = false;
+    } else {
+      //      spdlog::debug("BufferPoolManager: fail to get a free frame");
     }
   }
 
@@ -157,13 +162,17 @@ auto BufferPoolManager::AllocatePage() -> page_id_t { return next_page_id_++; }
 auto BufferPoolManager::FetchPageBasic(page_id_t page_id) -> BasicPageGuard { return {this, FetchPage(page_id)}; }
 
 auto BufferPoolManager::FetchPageRead(page_id_t page_id) -> ReadPageGuard {
+  //  spdlog::debug("BufferPoolManager: fetch page {} with read guard", page_id);
   auto *page = FetchPage(page_id);
+  BUSTUB_ASSERT(page != nullptr, "");
   page->RLatch();
   return {this, page};
 }
 
 auto BufferPoolManager::FetchPageWrite(page_id_t page_id) -> WritePageGuard {
+  //  spdlog::debug("BufferPoolManager: fetch page {} with write guard", page_id);
   auto *page = FetchPage(page_id);
+  BUSTUB_ASSERT(page != nullptr, "");
   page->WLatch();
   return {this, page};
 }
@@ -172,13 +181,17 @@ auto BufferPoolManager::NewPageGuarded(page_id_t *page_id) -> BasicPageGuard { r
 
 auto BufferPoolManager::NewPageGuardedRead(page_id_t *page_id) -> ReadPageGuard {
   auto *page = NewPage(page_id);
+  BUSTUB_ASSERT(page != nullptr, "");
   page->RLatch();
+  //  spdlog::debug("BufferPoolManager: new page {} with read guard", *page_id);
   return {this, page};
 }
 
 auto BufferPoolManager::NewPageGuardedWrite(page_id_t *page_id) -> WritePageGuard {
   auto *page = NewPage(page_id);
+  BUSTUB_ASSERT(page != nullptr, "");
   page->WLatch();
+  //  spdlog::debug("BufferPoolManager: new page {} with read guard", *page_id);
   return {this, page};
 }
 

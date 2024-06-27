@@ -1,13 +1,16 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <type_traits>
 
 #include "common/config.h"
 #include "common/exception.h"
 #include "common/logger.h"
 #include "common/macros.h"
 #include "common/rid.h"
+// #include "spdlog/spdlog.h"
 #include "storage/index/b_plus_tree.h"
+#include "storage/index/index_iterator.h"
 #include "storage/page/b_plus_tree_page.h"
 #include "storage/page/page_guard.h"
 
@@ -32,7 +35,8 @@ BPLUSTREE_TYPE::BPlusTree(std::string name, page_id_t header_page_id, BufferPool
  */
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::IsEmpty() const -> bool {
-  auto root_page_id = GetRootPageId();
+  auto header_page_guard = bpm_->FetchPageRead(header_page_id_);
+  auto root_page_id = header_page_guard.As<BPlusTreeHeaderPage>()->root_page_id_;
   if (root_page_id == INVALID_PAGE_ID) {
     // don't have a root page, obviously b+tree is empty
     return true;
@@ -41,6 +45,7 @@ auto BPLUSTREE_TYPE::IsEmpty() const -> bool {
   auto root_page = guard.template As<BPlusTreePage>();
   return root_page->GetSize() == 0;
 }
+
 /*****************************************************************************
  * SEARCH
  *****************************************************************************/
@@ -51,23 +56,23 @@ auto BPLUSTREE_TYPE::IsEmpty() const -> bool {
  */
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result, Transaction *txn) -> bool {
-  if (GetRootPageId() == INVALID_PAGE_ID) {
-    return false;
-  }
   Context ctx;
-  ctx.root_page_id_ = GetRootPageId();
-  BasicCrabbingSearch(key, &ctx);
-  if (ctx.read_set_.empty()) {
+  ctx.header_page_read_ = bpm_->FetchPageRead(header_page_id_);
+  ctx.root_page_id_ = ctx.header_page_read_->As<BPlusTreeHeaderPage>()->root_page_id_;
+  auto root_page_id = ctx.root_page_id_;
+  if (root_page_id == INVALID_PAGE_ID) {
     return false;
   }
-  auto guard = std::move(ctx.read_set_.front());
-  auto leaf_page = guard.template As<LeafPage>();
-  auto size = leaf_page->GetSize();
+  BasicCrabbingSearch(key, &ctx);
+  auto leaf_page_guard = std::move(ctx.read_set_.front());
+  auto leaf_page = leaf_page_guard.template As<LeafPage>();
   bool key_found = false;
-  for (int i = 0; i < size; i++) {
+  for (int i = 0; i < leaf_page->GetSize(); i++) {
     if (comparator_(key, leaf_page->KeyAt(i)) == 0) {
       result->push_back(leaf_page->ValueAt(i));
       key_found = true;
+      // break, we only support unique key
+      break;
     }
   }
   return key_found;
@@ -75,19 +80,27 @@ auto BPLUSTREE_TYPE::GetValue(const KeyType &key, std::vector<ValueType> *result
 
 /*****************************************************************************
  * INSERTION
- *****************************************************************************/
+ ******************* **********************************************************/
 /*
  * Insert constant key & value pair into b+ tree
  * if current tree is empty, start new tree, update root page id and insert
  * entry, otherwise insert into leaf page.
  * @return: since we only support unique key, if user try to insert duplicate
  * keys return false, otherwise return true.
+ *
+ * Split pages only when page size is EQUAL TO max page size BEFORE insertion
  */
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transaction *txn) -> bool {
-  auto root_page_id = GetRootPageId();
+  // spdlog::debug("begin to insert key {}", key.GetAsInteger());
+  Context ctx;
+  ctx.header_page_write_ = bpm_->FetchPageWrite(header_page_id_);
+  ctx.root_page_id_ = ctx.header_page_write_->As<BPlusTreeHeaderPage>()->root_page_id_;
+  // spdlog::debug("find root page = {}", ctx.root_page_id_);
+  // check whether root page exists and create one if not
+  auto root_page_id = ctx.root_page_id_;
   if (root_page_id == INVALID_PAGE_ID) {
-    // current tree is empty, start new tree, update root page id and insert entry
+    // current tree is empty, build a new tree, update root page id and insert entry
     page_id_t page_id;
     auto tmp_guard = bpm_->NewPageGuardedWrite(&page_id);
     auto new_page = tmp_guard.template AsMut<LeafPage>();
@@ -95,42 +108,43 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transact
     new_page->Init(leaf_max_size_);
     new_page->InsertAt(0, key, value);
     // set new page to root page
-    SetRootPageId(page_id);
+    SetRootPageId(&ctx, page_id);
+    // spdlog::debug("root page not exists, set new root page = {}, and insert key = {}", page_id, key.GetAsInteger());
     return true;
   }
 
-  Context ctx;
-  ctx.root_page_id_ = root_page_id;
-  if (!CrabbingSearchOptimistic(key, &ctx, OperationType::Insertion)) {
-    BUSTUB_ASSERT(ctx.read_set_.empty(), "");
-    BUSTUB_ASSERT(ctx.write_set_.empty(), "");
-    CrabbingSearchPessimistic(key, &ctx, OperationType::Insertion);
-  }
+  // CrabbingSearchConservative(key, &ctx);
+  CrabbingSearchPessimistic(key, &ctx, OperationType::Insertion);
+  // if (!CrabbingSearchOptimistic(key, &ctx, OperationType::Insertion)) {
+  //   CrabbingSearchPessimistic(key, &ctx, OperationType::Insertion);
+  // }
   // take leaf page
   auto leaf_page_guard = std::move(ctx.write_set_.back());
   ctx.write_set_.pop_back();
   auto leaf_page = leaf_page_guard.template AsMut<LeafPage>();
-  // check duplicate keys and
-  // record the logical order of inserted entry should be in the leaf page
+  // check duplicate keys and record the logical order of inserted entry should be in the leaf page
   int lo = leaf_page->GetSize();  // logical order
   for (int i = 0; i < leaf_page->GetSize(); i++) {
     if (comparator_(key, leaf_page->KeyAt(i)) == 0) {
+      // spdlog::error("key {} collision", key.GetAsInteger());
       return false;
     }
     if (comparator_(key, leaf_page->KeyAt(i)) < 0) {
       lo = i;
+      // spdlog::debug("inserting key {} into leaf page's {}th slot", key.GetAsInteger(), lo);
       break;
     }
   }
 
   // if leaf page is not full, just insert entry into it, then the operation is done
   if (leaf_page->GetSize() < leaf_page->GetMaxSize()) {
-    BUSTUB_ASSERT(ctx.write_set_.empty(), "");
+    // spdlog::debug("leaf page size {} < max size {}, just insert", leaf_page->GetSize(), leaf_page->GetMaxSize());
     leaf_page->InsertAt(lo, key, value);
     return true;
   }
   // leaf page is already full, split is needed.
   BUSTUB_ASSERT(leaf_page->GetSize() == leaf_page->GetMaxSize(), "");
+  // spdlog::debug("leaf page size {} == max size {}, split is needed", leaf_page->GetSize());
 
   // 1. Split leaf page L into two pages L1 and L2.
   // 2. Redistribute entries evenly and copy up the middle key.
@@ -158,21 +172,23 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value, Transact
     leaf_page->SetSize(leaf_page->GetMaxSize() / 2 + 1);
     new_page->InsertAt(lo - (leaf_page->GetMaxSize() / 2 + 1), key, value);
   }
+  // spdlog::debug("split evenly to new page = {}, key[0] = {}", new_page_id, new_page->KeyAt(0).GetAsInteger());
+
   // consider the situation that current leaf page is root page
-  const KeyType &middle_key = new_page->KeyAt(0);
   if (ctx.IsRootPage(leaf_page_guard.PageId())) {
-    BUSTUB_ASSERT(ctx.write_set_.empty(), "");
+    // BUSTUB_ASSERT(ctx.write_set_.empty(), "");
     page_id_t root_page_id;
     auto root_page_guard = bpm_->NewPageGuardedWrite(&root_page_id);
     auto root_page = root_page_guard.template AsMut<InternalPage>();
     root_page->Init(internal_max_size_);
-    root_page->InsertAt(0, KeyType{}, leaf_page_guard.PageId());
-    root_page->InsertAt(1, middle_key, new_page_id);
-    SetRootPageId(root_page_id);
+    root_page->InsertAt(0, leaf_page->KeyAt(0), leaf_page_guard.PageId());
+    root_page->InsertAt(1, new_page->KeyAt(0), new_page_id);
+    SetRootPageId(&ctx, root_page_id);
+    // spdlog::debug("reach root, set new root page = {}, points to {} and {}", leaf_page_guard.PageId(), new_page_id);
   } else {
     // insert an entry pointing to L2 into the parent of L
     BUSTUB_ASSERT(!ctx.write_set_.empty(), "");
-    InsertIntoInternalPage(&ctx, middle_key, new_page_id);
+    InsertIntoInternalPage(&ctx, new_page->KeyAt(0), new_page_id);
   }
   return true;
 }
@@ -183,8 +199,7 @@ void BPLUSTREE_TYPE::InsertIntoInternalPage(Context *ctx, const KeyType &key, pa
   auto internal_page_guard = std::move(ctx->write_set_.back());
   ctx->write_set_.pop_back();
   auto internal_page = internal_page_guard.template AsMut<InternalPage>();
-  // check duplicate keys and
-  // record the logical order of inserted entry should be in the leaf page
+  // check duplicate keys and record the logical order of inserted entry should be in the leaf page
   int lo = internal_page->GetSize();  // logical order
   for (int i = 1; i < internal_page->GetSize(); i++) {
     if (comparator_(key, internal_page->KeyAt(i)) == 0) {
@@ -192,19 +207,25 @@ void BPLUSTREE_TYPE::InsertIntoInternalPage(Context *ctx, const KeyType &key, pa
     }
     if (comparator_(key, internal_page->KeyAt(i)) < 0) {
       lo = i;
+      // spdlog::debug("inserting key {} , page_id = {} into internal page's {}th slot", key.GetAsInteger(), page_id,
+      // lo);
       break;
     }
   }
 
   // if internal page is not full, just insert entry into it, then the operation is done
   if (internal_page->GetSize() < internal_page->GetMaxSize()) {
-    BUSTUB_ASSERT(ctx->write_set_.empty(), "");
+    // clang-format off
+    // spdlog::debug("internal page size {} < max size {},
+    // just insert", internal_page->GetSize(), internal_page->GetMaxSize());
+    // clang-format on
     internal_page->InsertAt(lo, key, page_id);
     return;
   }
-
   // internal page is already full, split is needed.
   BUSTUB_ASSERT(internal_page->GetSize() == internal_page->GetMaxSize(), "");
+  // spdlog::debug("internal page size {} == max size {}, split is needed", internal_page->GetSize());
+
   // get a new internal page and init it
   page_id_t new_page_id;
   auto temp_guard = bpm_->NewPageGuardedWrite(&new_page_id);
@@ -224,21 +245,24 @@ void BPLUSTREE_TYPE::InsertIntoInternalPage(Context *ctx, const KeyType &key, pa
     internal_page->SetSize(internal_page->GetMaxSize() / 2 + 1);
     new_page->InsertAt(lo - (internal_page->GetMaxSize() / 2 + 1), key, page_id);
   }
-  // insert an entry pointing to L2 into the parent of L
-  const KeyType &middle_key = new_page->KeyAt(0);
+  // spdlog::debug("split evenly to new page = {}, key[0] = {}", new_page_id, new_page->KeyAt(0).GetAsInteger());
+
   // consider the situation that current internal page is root page
   if (ctx->IsRootPage(internal_page_guard.PageId())) {
-    BUSTUB_ASSERT(ctx->write_set_.empty(), "");
+    // BUSTUB_ASSERT(ctx->write_set_.empty(), "");
     page_id_t root_page_id;
     auto root_page_guard = bpm_->NewPageGuardedWrite(&root_page_id);
     auto root_page = root_page_guard.template AsMut<InternalPage>();
     root_page->Init(internal_max_size_);
-    root_page->InsertAt(0, KeyType{}, internal_page_guard.PageId());
-    root_page->InsertAt(1, middle_key, new_page_id);
-    SetRootPageId(root_page_id);
+    root_page->InsertAt(0, internal_page->KeyAt(0), internal_page_guard.PageId());
+    root_page->InsertAt(1, new_page->KeyAt(0), new_page_id);
+    SetRootPageId(ctx, root_page_id);
+    // spdlog::debug("reach root, set new root page = {}, points to {} and {}", internal_page_guard.PageId(),
+    // new_page_id);
   } else {
+    // insert an entry pointing to L2 into the parent of L
     BUSTUB_ASSERT(!ctx->write_set_.empty(), "");
-    InsertIntoInternalPage(ctx, middle_key, new_page_id);
+    InsertIntoInternalPage(ctx, new_page->KeyAt(0), new_page_id);
   }
 }
 
@@ -251,12 +275,426 @@ void BPLUSTREE_TYPE::InsertIntoInternalPage(Context *ctx, const KeyType &key, pa
  * If not, User needs to first find the right leaf page as deletion target, then
  * delete entry from leaf page. Remember to deal with redistribute or merge if
  * necessary.
+ *
+ * Redistribute or merge pages only when page size is LESS THAN min page size AFTER deletion.
  */
 INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *txn) {
-  // Declaration of context instance.
+  // spdlog::debug("begin to remove key {}", key.ToString());
+  // if current tree is empty, just return
+  if (IsEmpty()) {
+    // spdlog::debug("current tree empty, remove fails");
+    return;
+  }
+
   Context ctx;
-  (void)ctx;
+  ctx.header_page_write_ = bpm_->FetchPageWrite(header_page_id_);
+  ctx.root_page_id_ = ctx.header_page_write_->As<BPlusTreeHeaderPage>()->root_page_id_;
+  // spdlog::debug("find root page = {}", ctx.root_page_id_);
+  CrabbingSearchPessimistic(key, &ctx, OperationType::Deletion);
+
+  // spdlog::debug(ctx.ToString());
+
+  // take leaf page
+  auto leaf_page_guard = std::move(ctx.write_set_.back());
+  ctx.write_set_.pop_back();
+  auto leaf_page = leaf_page_guard.template AsMut<LeafPage>();
+  // find the index of entry to be removed
+  int idx = 0;
+  bool is_break = false;
+  for (; idx < leaf_page->GetSize(); idx++) {
+    if (comparator_(key, leaf_page->KeyAt(idx)) == 0) {
+      is_break = true;
+      break;
+    }
+  }
+
+  // spdlog::debug("find key {} locate at {}th slot of leaf page {}, then delete it", key.ToString(), idx,
+  // leaf_page_guard.PageId());
+
+  if (!is_break) {
+    // spdlog::debug("didn't find key {}, just return", key.ToString());
+    return;
+  }
+
+  leaf_page->DeleteAt(idx);
+
+  // if leaf page is still at least half full, the operation is done
+  // ">=" or ">"
+  if (leaf_page->GetSize() >= leaf_page->GetMinSize()) {
+    // spdlog::debug("leaf page {} is healthy, just return", leaf_page_guard.PageId());
+    return;
+  }
+
+  // if leaf page is root page, the operation is also done
+  if (ctx.IsRootPage(leaf_page_guard.PageId())) {
+    // spdlog::debug("leaf page {} is root, just return", leaf_page_guard.PageId());
+    return;
+  }
+
+  // the size of leaf page is less than half full,
+  // try redistribute first
+  BUSTUB_ASSERT(!ctx.write_set_.empty(), "");
+  BUSTUB_ASSERT(leaf_page->GetSize() == leaf_page->GetMinSize() - 1, "");
+  auto parent_page_guard = std::move(ctx.write_set_.back());
+  ctx.write_set_.pop_back();
+
+  // spdlog::debug("leaf page {} is starving, begin to redistribute or merge it", leaf_page_guard.PageId());
+  auto page_id_to_remove = RedisOrMergeChildPage<LeafPage>(&parent_page_guard, &leaf_page_guard);
+  // spdlog::debug("leaf page {} is starving, begin to redistribute it", leaf_page_guard.PageId());
+  // bool success = RedistributeChildPage<LeafPage>(&parent_page_guard, &leaf_page_guard);
+  //
+  // if (success) {
+  //   spdlog::debug("redistribution successes, just return");
+  //   return;
+  // }
+  //
+  // spdlog::debug("redistribution fails, begin to merge");
+  // auto page_id_to_remove = MergeChildPage(&parent_page_guard, &leaf_page_guard);
+
+  if (page_id_to_remove != INVALID_PAGE_ID) {
+    ctx.write_set_.push_back(std::move(parent_page_guard));
+    RemoveFromInternalPage(&ctx, page_id_to_remove);
+  }
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+template <typename ChildPageType>
+auto BPLUSTREE_TYPE::RedisOrMergeChildPage(WritePageGuard *parent_page_guard, WritePageGuard *starving_page_guard)
+    -> page_id_t {
+  using ChildPageValueType = typename page_value_t<ChildPageType>::type;
+  constexpr bool is_leaf_starving = std::is_same<ChildPageType, LeafPage>();
+
+  // spdlog::debug("redistribute or merge starving page {}, parent page is {}", starving_page_guard->PageId(),
+  // parent_page_guard->PageId());
+
+  auto parent_page = parent_page_guard->template AsMut<InternalPage>();
+
+  // spdlog::debug("parent page {} layout:\n\t {}", parent_page_guard->PageId(), parent_page->ToString());
+
+  bool could_merge = false;
+  KeyType key{};
+  ChildPageValueType value{};
+  WritePageGuard child_page_guard{};
+  int starving_page_index = -1;
+  for (int i = 0; i < parent_page->GetSize(); i++) {
+    auto child_page_id = parent_page->ValueAt(i);
+    if (child_page_id == starving_page_guard->PageId()) {
+      starving_page_index = i;
+      break;
+    }
+    child_page_guard = bpm_->FetchPageWrite(child_page_id);
+    auto *child_page = child_page_guard.template AsMut<ChildPageType>();
+
+    if (could_merge) {
+      auto tmp_key = child_page->KeyAt(child_page->GetSize() - 1);
+      auto tmp_value = child_page->ValueAt(child_page->GetSize() - 1);
+      child_page->DeleteAt(child_page->GetSize() - 1);
+      child_page->InsertAt(0, key, value);
+      parent_page->SetKeyAt(i, child_page->KeyAt(0));  // update parent page
+      key = tmp_key;
+      value = tmp_value;
+      continue;
+    }
+    if (child_page->GetSize() > child_page->GetMinSize()) {
+      could_merge = true;
+      key = child_page->KeyAt(child_page->GetSize() - 1);
+      value = child_page->ValueAt(child_page->GetSize() - 1);
+      child_page->DeleteAt(child_page->GetSize() - 1);
+    } else {
+      BUSTUB_ASSERT(child_page->GetSize() == child_page->GetMinSize(), "");
+    }
+  }
+
+  BUSTUB_ASSERT(starving_page_index >= 0, "");
+
+  auto starving_page = starving_page_guard->AsMut<ChildPageType>();
+
+  // case 1: redistribute from left side
+  if (could_merge) {
+    BUSTUB_ASSERT(starving_page_index > 0, "");
+    starving_page->InsertAt(0, key, value);
+    parent_page->SetKeyAt(starving_page_index, starving_page->KeyAt(0));  // update parent page
+    return INVALID_PAGE_ID;
+  }
+
+  // case 2: merge starving page to left sibling page
+  if (starving_page_index > 0) {
+    auto *left_sibling_page = child_page_guard.template AsMut<ChildPageType>();
+    for (int i = 0; i < starving_page->GetSize(); i++) {
+      left_sibling_page->InsertAt(left_sibling_page->GetSize(), starving_page->KeyAt(i), starving_page->ValueAt(i));
+    }
+    if (is_leaf_starving) {
+      // HACK: ugly way, but I have no better ideas now
+      reinterpret_cast<LeafPage *>(left_sibling_page)
+          ->SetNextPageId(reinterpret_cast<LeafPage *>(starving_page)->GetNextPageId());
+    }
+    return starving_page_guard->PageId();
+  }
+
+  auto right_sibling_page_id = parent_page->ValueAt(1);
+  auto right_sibling_page_guard = bpm_->FetchPageWrite(right_sibling_page_id);
+  auto right_sibling_page = right_sibling_page_guard.template AsMut<ChildPageType>();
+
+  // case 3: redistribute with right sibling page
+  if (right_sibling_page->GetSize() > right_sibling_page->GetMinSize()) {
+    auto key = right_sibling_page->KeyAt(0);
+    auto value = right_sibling_page->ValueAt(0);
+    right_sibling_page->DeleteAt(0);
+    parent_page->SetKeyAt(1, right_sibling_page->KeyAt(0));  // update parent page
+    starving_page->InsertAt(starving_page->GetSize(), key, value);
+    return INVALID_PAGE_ID;
+  }
+
+  // case 4: merge starving page to right sibling page
+  for (int i = 0; i < right_sibling_page->GetSize(); i++) {
+    starving_page->InsertAt(starving_page->GetSize(), right_sibling_page->KeyAt(i), right_sibling_page->ValueAt(i));
+  }
+  if (is_leaf_starving) {
+    // HACK: ugly way, but I have no better ideas now
+    reinterpret_cast<LeafPage *>(starving_page)
+        ->SetNextPageId(reinterpret_cast<LeafPage *>(right_sibling_page)->GetNextPageId());
+  }
+  return right_sibling_page_guard.PageId();
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+template <typename StarvingPageType>
+auto BPLUSTREE_TYPE::RedistributeChildPage(WritePageGuard *parent_page_guard, WritePageGuard *starving_page_guard)
+    -> bool {
+  // spdlog::debug("redistribute starving page {}, parent page is {}", starving_page_guard->PageId(),
+  // parent_page_guard->PageId());
+
+  auto parent_page = parent_page_guard->template AsMut<InternalPage>();
+
+  // spdlog::debug("parent page {} layout:\n\t {}", parent_page_guard->PageId(), parent_page->ToString());
+
+  // get left closest and right closest child page that is more than half full and its index in parent page
+  struct ChildPageInfo {
+    int index_;
+    WritePageGuard guard_;
+  };
+  std::deque<ChildPageInfo> child_set_left{};
+  std::deque<ChildPageInfo> child_set_right{};
+  int leaf_page_index = parent_page->GetSize();
+  for (int i = 0; i < parent_page->GetSize(); i++) {
+    auto child_page_id = parent_page->ValueAt(i);
+    if (child_page_id == starving_page_guard->PageId()) {
+      leaf_page_index = i;
+      break;
+    }
+    auto child_page_guard = bpm_->FetchPageWrite(child_page_id);
+    BPlusTreePage *child_page = child_page_guard.template AsMut<StarvingPageType>();
+    if (child_page->GetSize() > child_page->GetMinSize()) {
+      child_set_left.clear();
+      child_set_left.push_back({i, std::move(child_page_guard)});
+    } else if (!child_set_left.empty()) {
+      BUSTUB_ASSERT(child_page->GetSize() == child_page->GetMinSize(), "");
+      child_set_left.push_back({i, std::move(child_page_guard)});
+    }
+  }
+  bool is_break = false;
+  for (int i = leaf_page_index + 1; i < parent_page->GetSize(); i++) {
+    auto child_page_id = parent_page->ValueAt(i);
+    // if (child_page_id == starving_page_guard->PageId()) {
+    //   break;
+    // }
+    auto child_page_guard = bpm_->FetchPageWrite(child_page_id);
+    auto child_page = child_page_guard.template AsMut<StarvingPageType>();
+    if (child_page->GetSize() > child_page->GetMinSize()) {
+      child_set_right.push_back({i, std::move(child_page_guard)});
+      is_break = true;
+      break;
+    }
+    BUSTUB_ASSERT(child_page->GetSize() == child_page->GetMinSize(), "");
+    child_set_right.push_back({i, std::move(child_page_guard)});
+  }
+  if (!is_break) {
+    while (!child_set_right.empty()) {
+      child_set_right.pop_front();
+    }
+  }
+
+  // std::string left_child_str = "";
+  // for (auto &info : child_set_left) {
+  //   left_child_str += "(" + std::to_string(info.index_) + ", " + std::to_string(info.guard_.PageId()) + ") ";
+  // }
+  // std::string right_child_str = "";
+  // for (auto &info : child_set_right) {
+  //   left_child_str += "(" + std::to_string(info.index_) + ", " + std::to_string(info.guard_.PageId()) + ") ";
+  // }
+  // spdlog::debug("left side childs (page ids):\t" + left_child_str);
+  // spdlog::debug("right side childs (page ids):\t" + right_child_str);
+
+  if (child_set_left.empty() && child_set_right.empty()) {
+    return false;
+  }
+
+  // redistribute and update parent node meantime
+  auto starving_page = starving_page_guard->AsMut<StarvingPageType>();
+  if (child_set_right.empty()) {
+    // use left side leaf nodes to redistribute
+    BUSTUB_ASSERT(!child_set_left.empty(), "");
+    auto child_page_info = std::move(child_set_left.front());
+    child_set_left.pop_front();
+    auto child_page_guard = std::move(child_page_info.guard_);
+    auto child_page = child_page_guard.template AsMut<StarvingPageType>();
+    // init the key-value pair to be inserted into next leaf page
+    auto key = child_page->KeyAt(child_page->GetSize() - 1);
+    auto value = child_page->ValueAt(child_page->GetSize() - 1);
+    child_page->DeleteAt(child_page->GetSize() - 1);
+    while (!child_set_left.empty()) {
+      auto child_page_info = std::move(child_set_left.front());
+      child_set_left.pop_front();
+      auto child_page_guard = std::move(child_page_info.guard_);
+      auto child_page = child_page_guard.template AsMut<StarvingPageType>();
+      child_page->InsertAt(0, key, value);
+      parent_page->SetKeyAt(child_page_info.index_, child_page->KeyAt(0));  // update parent page
+      // update the key-value pair to be inserted into next leaf page
+      key = child_page->KeyAt(child_page->GetSize() - 1);
+      value = child_page->ValueAt(child_page->GetSize() - 1);
+      child_page->DeleteAt(child_page->GetSize() - 1);
+    }
+    starving_page->InsertAt(0, key, value);
+    parent_page->SetKeyAt(leaf_page_index, starving_page->KeyAt(0));  // update parent page
+  } else {
+    // use right side leaf nodes to redistribute
+    BUSTUB_ASSERT(!child_set_right.empty(), "");
+    auto child_page_info = std::move(child_set_right.back());
+    child_set_right.pop_back();
+    auto child_page_guard = std::move(child_page_info.guard_);
+    auto child_page = child_page_guard.template AsMut<StarvingPageType>();
+    // init the key-value pair to be inserted into next leaf page
+    auto key = child_page->KeyAt(0);
+    auto value = child_page->ValueAt(0);
+    child_page->DeleteAt(0);
+    parent_page->SetKeyAt(child_page_info.index_, child_page->KeyAt(0));  // update parent page
+    while (!child_set_right.empty()) {
+      auto child_page_info = std::move(child_set_right.back());
+      child_set_right.pop_back();
+      auto child_page_guard = std::move(child_page_info.guard_);
+      auto child_page = child_page_guard.template AsMut<StarvingPageType>();
+      child_page->InsertAt(child_page->GetSize(), key, value);
+      // update the key-value pair to be inserted into next leaf page
+      key = child_page->KeyAt(0);
+      value = child_page->ValueAt(0);
+      child_page->DeleteAt(0);
+      parent_page->SetKeyAt(child_page_info.index_, child_page->KeyAt(0));  // update parent page
+    }
+    starving_page->InsertAt(starving_page->GetSize(), key, value);
+  }
+
+  return true;
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+auto BPLUSTREE_TYPE::MergeChildPage(WritePageGuard *parent_page_guard, WritePageGuard *merged_page_guard) -> page_id_t {
+  bool is_merge_leaf_page = merged_page_guard->template As<BPlusTreePage>()->IsLeafPage();
+  auto parent_page = parent_page_guard->AsMut<InternalPage>();
+  // the index in parent page of leaf page to be merged
+  int child_page_index = parent_page->GetSize();
+  for (int i = 0; i < parent_page->GetSize(); i++) {
+    if (parent_page->ValueAt(i) == merged_page_guard->PageId()) {
+      child_page_index = i;
+      break;
+    }
+  }
+  // merge target leaf page and one of its sibling page, left sibling is preferred
+  if (child_page_index == 0) {
+    auto sibling_page_id = parent_page->ValueAt(1);
+    auto sibling_page_guard = bpm_->FetchPageWrite(sibling_page_id);
+    if (is_merge_leaf_page) {
+      auto sibling_page = sibling_page_guard.template AsMut<LeafPage>();
+      auto merged_page = merged_page_guard->AsMut<LeafPage>();
+      // merge sibling_page to merged_page
+      for (int i = 0; i < sibling_page->GetSize(); i++) {
+        merged_page->InsertAt(merged_page->GetSize(), sibling_page->KeyAt(i), sibling_page->ValueAt(i));
+      }
+      // update next page pointer
+      merged_page->SetNextPageId(sibling_page->GetNextPageId());
+      // update parent page key
+      parent_page->SetKeyAt(0, merged_page->KeyAt(0));
+      return sibling_page_id;
+    }
+    // else merge internal pages
+    auto sibling_page = sibling_page_guard.template AsMut<InternalPage>();
+    auto merged_page = merged_page_guard->AsMut<InternalPage>();
+    for (int i = merged_page->GetSize() - 1; i >= 0; i--) {
+      sibling_page->InsertAt(0, merged_page->KeyAt(i), merged_page->ValueAt(i));
+    }
+    // update parent page key
+    parent_page->SetKeyAt(1, sibling_page->KeyAt(0));
+  } else {
+    auto sibling_page_id = parent_page->ValueAt(child_page_index - 1);
+    auto sibling_page_guard = bpm_->FetchPageWrite(sibling_page_id);
+    if (is_merge_leaf_page) {
+      auto sibling_page = sibling_page_guard.template AsMut<LeafPage>();
+      auto merged_page = merged_page_guard->AsMut<LeafPage>();
+      // merge merged_page to sibling_page
+      for (int i = 0; i < merged_page->GetSize(); i++) {
+        sibling_page->InsertAt(sibling_page->GetSize(), merged_page->KeyAt(i), merged_page->ValueAt(i));
+      }
+      // update next page pointer
+      sibling_page->SetNextPageId(merged_page->GetNextPageId());
+    } else {
+      auto sibling_page = sibling_page_guard.template AsMut<InternalPage>();
+      auto merged_page = merged_page_guard->AsMut<InternalPage>();
+      for (int i = 0; i < merged_page->GetSize(); i++) {
+        sibling_page->InsertAt(sibling_page->GetSize(), merged_page->KeyAt(i), merged_page->ValueAt(i));
+      }
+    }
+  }
+  return merged_page_guard->PageId();
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::RemoveFromInternalPage(Context *ctx, page_id_t page_id) {
+  auto internal_page_guard = std::move(ctx->write_set_.back());
+  ctx->write_set_.pop_back();
+  auto internal_page = internal_page_guard.template AsMut<InternalPage>();
+  // find the index of entry to be removed and remove it
+  int idx = 0;
+  for (; idx < internal_page->GetSize(); idx++) {
+    if (page_id == internal_page->ValueAt(idx)) {
+      break;
+    }
+  }
+  internal_page->DeleteAt(idx);
+  bpm_->DeletePage(page_id);
+
+  if (internal_page->GetSize() >= internal_page->GetMinSize()) {
+    return;
+  }
+
+  if (ctx->IsRootPage(internal_page_guard.PageId())) {
+    if (internal_page->GetSize() == 1) {
+      // if current internal page is root page and it only has one entry left,
+      // then delete current page and set its unique child page as root page
+      SetRootPageId(ctx, internal_page->ValueAt(0));
+      bpm_->DeletePage(ctx->root_page_id_);
+      ctx->root_page_id_ = internal_page->ValueAt(0);
+    }
+    return;
+  }
+
+  BUSTUB_ASSERT(!ctx->write_set_.empty(), "");
+  BUSTUB_ASSERT(internal_page->GetSize() == internal_page->GetMinSize() - 1, "");
+  auto parent_page_guard = std::move(ctx->write_set_.back());
+  ctx->write_set_.pop_back();
+
+  auto page_id_to_remove = RedisOrMergeChildPage<InternalPage>(&parent_page_guard, &internal_page_guard);
+  // bool success = RedistributeChildPage<InternalPage>(&parent_page_guard, &internal_page_guard);
+  // if (success) {
+  //   return;
+  // }
+  //
+  // // redistribution fails, try merge
+  // auto page_id_to_remove = MergeChildPage(&parent_page_guard, &internal_page_guard);
+
+  if (page_id_to_remove != INVALID_PAGE_ID) {
+    ctx->write_set_.push_back(std::move(parent_page_guard));
+    RemoveFromInternalPage(ctx, page_id_to_remove);
+  }
 }
 
 /*****************************************************************************
@@ -268,7 +706,19 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *txn) {
  * @return : index iterator
  */
 INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(); }
+auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE {
+  Context ctx;
+  ctx.read_set_.emplace_back();  // redundant item to make while loop works correctly
+  auto page_id = GetRootPageId();
+  while (!IsLeafPage(page_id)) {
+    ctx.read_set_.push_back(bpm_->FetchPageRead(page_id));
+    ctx.read_set_.pop_front();
+    auto page = ctx.read_set_.back().As<InternalPage>();
+    page_id = page->ValueAt(0);
+  }
+
+  return INDEXITERATOR_TYPE(page_id, 0, bpm_);
+}
 
 /*
  * Input parameter is low key, find the leaf page that contains the input key
@@ -276,7 +726,21 @@ auto BPLUSTREE_TYPE::Begin() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE()
  * @return : index iterator
  */
 INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(); }
+auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE {
+  Context ctx;
+  ctx.header_page_write_ = bpm_->FetchPageWrite(header_page_id_);
+  ctx.root_page_id_ = ctx.header_page_write_->As<BPlusTreeHeaderPage>()->root_page_id_;
+  BasicCrabbingSearch(key, &ctx);
+  auto leaf_page_guard = std::move(ctx.read_set_.front());
+  auto leaf_page = leaf_page_guard.template As<LeafPage>();
+  auto size = leaf_page->GetSize();
+  for (int i = 0; i < size; i++) {
+    if (comparator_(key, leaf_page->KeyAt(i)) == 0) {
+      return INDEXITERATOR_TYPE(std::move(leaf_page_guard), i, bpm_);
+    }
+  }
+  return End();
+}
 
 /*
  * Input parameter is void, construct an index iterator representing the end
@@ -284,7 +748,7 @@ auto BPLUSTREE_TYPE::Begin(const KeyType &key) -> INDEXITERATOR_TYPE { return IN
  * @return : index iterator
  */
 INDEX_TEMPLATE_ARGUMENTS
-auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(); }
+auto BPLUSTREE_TYPE::End() -> INDEXITERATOR_TYPE { return INDEXITERATOR_TYPE(INVALID_PAGE_ID, 0, bpm_); }
 
 /**
  * @return Page id of the root of this tree
@@ -300,9 +764,9 @@ auto BPLUSTREE_TYPE::GetRootPageId() const -> page_id_t {
  * @brief set page_id as the root of this tree
  */
 INDEX_TEMPLATE_ARGUMENTS
-void BPLUSTREE_TYPE::SetRootPageId(page_id_t page_id) {
-  auto guard = bpm_->FetchPageWrite(header_page_id_);
-  auto header_page = guard.AsMut<BPlusTreeHeaderPage>();
+void BPLUSTREE_TYPE::SetRootPageId(Context *ctx, page_id_t page_id) {
+  BUSTUB_ASSERT(ctx->header_page_write_ != std::nullopt, "");
+  auto header_page = ctx->header_page_write_->AsMut<BPlusTreeHeaderPage>();
   header_page->root_page_id_ = page_id;
 }
 
@@ -538,67 +1002,77 @@ auto BPLUSTREE_TYPE::IsLeafPage(page_id_t page_id) const -> bool {
 
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::FindChild(const InternalPage *page, const KeyType &key) -> page_id_t {
-  auto page_id = INVALID_PAGE_ID;
   auto size = page->GetSize();
   // traversal the internal page to find correct child page id
   for (int i = 1; i < size; i++) {  // start from index 1, ignore the first key (index 0)
     if (comparator_(key, page->KeyAt(i)) < 0) {
-      page_id = page->ValueAt(i - 1);
-      break;
+      return page->ValueAt(i - 1);
     }
   }
   // if key don't less than any guide key, the last value is the correct child page id
-  page_id = (page_id == INVALID_PAGE_ID) ? page->ValueAt(size - 1) : page_id;
-  return page_id;
+  return page->ValueAt(size - 1);
 }
 
 INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::BasicCrabbingSearch(const KeyType &key, Context *ctx) {
-  ctx->read_set_.emplace_back();  // redundant item to make while loop works correctly
   auto page_id = ctx->root_page_id_;
   // start from root page, search down the B+tree until we reach leaf page
   while (!IsLeafPage(page_id)) {
     // latch coupling
     ctx->read_set_.push_back(bpm_->FetchPageRead(page_id));
-    ctx->read_set_.pop_front();
+    if (ctx->read_set_.size() > 1) {
+      ctx->read_set_.pop_front();
+    } else {
+      ctx->header_page_read_ = std::nullopt;
+    }
     auto page = ctx->read_set_.back().As<InternalPage>();
     page_id = FindChild(page, key);
   }
   // push leaf page
   ctx->read_set_.push_back(bpm_->FetchPageRead(page_id));
-  ctx->read_set_.pop_front();
+  if (ctx->read_set_.size() > 1) {
+    ctx->read_set_.pop_front();
+  }
   BUSTUB_ASSERT(ctx->read_set_.size() == 1, "");
-  BUSTUB_ASSERT(ctx->write_set_.empty(), "");
 }
 
+// NOT USED NOW: caller should make sure that this thread should only keep read lock on header page and discard write
+// lock before using this optimistic way, so if this search fails, caller should recheck
+// root_page_id's status and do appropriate operations, since the other threads may change the tree during the interval
 INDEX_TEMPLATE_ARGUMENTS
 auto BPLUSTREE_TYPE::CrabbingSearchOptimistic(const KeyType &key, Context *ctx, OperationType op_type) -> bool {
-  ctx->read_set_.emplace_back();  // redundant item to make while loop works correctly
   auto page_id = ctx->root_page_id_;
   // start from root page, search down the B+tree until we reach leaf page
   while (!IsLeafPage(page_id)) {
     // latch coupling
     ctx->read_set_.push_back(bpm_->FetchPageRead(page_id));
-    ctx->read_set_.pop_front();
+    if (ctx->read_set_.size() > 1) {
+      ctx->read_set_.pop_front();
+    } else {
+      ctx->header_page_read_ = std::nullopt;
+    }
     auto page = ctx->read_set_.back().As<InternalPage>();
     page_id = FindChild(page, key);
   }
   // push leaf page
   ctx->write_set_.push_back(bpm_->FetchPageWrite(page_id));
   ctx->read_set_.pop_front();
-  BUSTUB_ASSERT(ctx->read_set_.empty(), "");
-  BUSTUB_ASSERT(ctx->write_set_.size() == 1, "");
   auto page = ctx->write_set_.back().As<BPlusTreePage>();
   if ((op_type == OperationType::Insertion && page->GetSize() < page->GetMaxSize()) ||
       (op_type == OperationType::Deletion && page->GetSize() > page->GetMinSize())) {
+    BUSTUB_ASSERT(ctx->read_set_.empty(), "");
+    BUSTUB_ASSERT(ctx->write_set_.size() == 1, "");
     return true;
   }
   ctx->write_set_.pop_back();
+  BUSTUB_ASSERT(ctx->read_set_.empty(), "");
+  BUSTUB_ASSERT(ctx->write_set_.empty(), "");
   return false;
 }
 
 INDEX_TEMPLATE_ARGUMENTS
 void BPLUSTREE_TYPE::CrabbingSearchPessimistic(const KeyType &key, Context *ctx, OperationType op_type) {
+  // spdlog::debug("find root page = {}", ctx->root_page_id_);
   auto page_id = ctx->root_page_id_;
   // start from root page, search down the B+tree until we reach leaf page
   while (true) {
@@ -606,8 +1080,13 @@ void BPLUSTREE_TYPE::CrabbingSearchPessimistic(const KeyType &key, Context *ctx,
     ctx->write_set_.push_back(bpm_->FetchPageWrite(page_id));
     auto page = ctx->write_set_.back().As<BPlusTreePage>();
     // check if page is safe, if the page is safe, release latches on all its ancestors
-    if ((op_type == OperationType::Insertion && page->GetSize() < page->GetMaxSize()) ||
-        (op_type == OperationType::Deletion && page->GetSize() > page->GetMinSize())) {
+    if (ctx->IsRootPage(page_id)) {
+      if ((op_type == OperationType::Insertion && page->GetSize() < page->GetMaxSize()) ||
+          (op_type == OperationType::Deletion && page->GetSize() > 2)) {
+        ctx->header_page_write_ = std::nullopt;
+      }
+    } else if ((op_type == OperationType::Insertion && page->GetSize() < page->GetMaxSize()) ||
+               (op_type == OperationType::Deletion && page->GetSize() > page->GetMinSize())) {
       while (ctx->write_set_.size() > 1) {
         ctx->write_set_.pop_front();
       }
@@ -617,7 +1096,22 @@ void BPLUSTREE_TYPE::CrabbingSearchPessimistic(const KeyType &key, Context *ctx,
     }
     page_id = FindChild(reinterpret_cast<const InternalPage *>(page), key);
   }
-  BUSTUB_ASSERT(ctx->read_set_.empty(), "");
+}
+
+INDEX_TEMPLATE_ARGUMENTS
+void BPLUSTREE_TYPE::CrabbingSearchConservative(const KeyType &key, Context *ctx) {
+  // spdlog::debug("conservatively find leaf page with target key = {}", key.GetAsInteger());
+  auto page_id = ctx->root_page_id_;
+  // start from root page, search down the B+tree until we reach leaf page
+  while (true) {
+    ctx->write_set_.push_back(bpm_->FetchPageWrite(page_id));
+    // spdlog::debug("pushed back page = {}", page_id);
+    auto page = ctx->write_set_.back().As<BPlusTreePage>();
+    if (page->IsLeafPage()) {
+      break;
+    }
+    page_id = FindChild(reinterpret_cast<const InternalPage *>(page), key);
+  }
 }
 
 template class BPlusTree<GenericKey<4>, RID, GenericComparator<4>>;

@@ -81,7 +81,9 @@ void WritePageGuard::Drop() {
     return;
   }
   dropped_ = true;
-  guard_.page_->WUnlatch();
+  if (guard_.page_ != nullptr) {
+    guard_.page_->WUnlatch();
+  }
   guard_.Drop();
 }
 

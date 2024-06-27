@@ -65,6 +65,11 @@ class BPlusTreeInternalPage : public BPlusTreePage {
   auto InsertAt(int index, const KeyType &key, const ValueType &value) -> bool;
 
   /**
+   * @brief Delete given entry
+   */
+  void DeleteAt(int index);
+
+  /**
    * @param value the value to search for
    */
   auto ValueIndex(const ValueType &value) const -> int;
@@ -83,23 +88,27 @@ class BPlusTreeInternalPage : public BPlusTreePage {
    * @return std::string
    */
   auto ToString() const -> std::string {
-    std::string kstr = "(";
+    using std::to_string;
+
+    std::string kvstr = "(";
     bool first = true;
 
     // first key of internal page is always invalid
-    for (int i = 1; i < GetSize(); i++) {
-      KeyType key = KeyAt(i);
+    for (int i = 0; i < GetSize(); i++) {
       if (first) {
         first = false;
       } else {
-        kstr.append(",");
+        kvstr.append(", ");
       }
-
-      kstr.append(std::to_string(key.ToString()));
+      kvstr.append("[");
+      kvstr.append(to_string(KeyAt(i).ToString()));
+      kvstr.append(", ");
+      kvstr.append(to_string(ValueAt(i)));
+      kvstr.append("]");
     }
-    kstr.append(")");
+    kvstr.append(")");
 
-    return kstr;
+    return kvstr;
   }
 
  private:
