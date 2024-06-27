@@ -196,7 +196,7 @@ class BPlusTree {
    *
    * @return Leaf page is safe or not
    */
-  [[deprecated("Optimistic way is not complete, use pessimistic way.")]] auto CrabbingSearchOptimistic(
+  [[deprecated("Optimistic way is not complete, use pessimistic way instead.")]] auto CrabbingSearchOptimistic(
       const KeyType &key, Context *ctx, OperationType op_type) -> bool;
 
   /**
@@ -244,27 +244,6 @@ class BPlusTree {
    */
   template <typename ChildPageType>
   auto RedisOrMergeChildPage(WritePageGuard *parent_page_guard, WritePageGuard *starving_page_guard) -> page_id_t;
-
-  /**
-   * @brief Redistribute entries among leaf pages to make all of them at least half full.
-   *
-   * @param parent_page_guard Pointer to page guard of parent page of the leaf pages to be redistributed
-   * @starving_page_guard Pointer to page guard of the child page that is not half full
-   */
-  template <typename StarvingPageType>
-  [[deprecated("use RedisOrMergeChildPage instead")]] auto RedistributeChildPage(WritePageGuard *parent_page_guard,
-                                                                                 WritePageGuard *starving_page_guard)
-      -> bool;
-
-  /**
-   * @brief Merge target page to its sibling page
-   *
-   * @param parent_page_guard Pointer to WritePageGuard of parent page of target page
-   * @param merged_page_guard Pointer to WritePageGuard of target page
-   */
-  [[deprecated("use RedisOrMergeChildPage instead")]] auto MergeChildPage(WritePageGuard *parent_page_guard,
-                                                                          WritePageGuard *merged_page_guard)
-      -> page_id_t;
 
   /**
    * @brief Remove an entry from internal page that points to given page.
