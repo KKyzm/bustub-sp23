@@ -31,6 +31,9 @@ class IndexIterator {
   IndexIterator(ReadPageGuard &&guard, int entry_idx, BufferPoolManager *bpm);
   ~IndexIterator();  // NOLINT
 
+  IndexIterator(IndexIterator &&) = default;
+  IndexIterator &operator=(IndexIterator &&) = default;
+
   auto IsEnd() -> bool;
 
   auto operator*() -> const MappingType &;
