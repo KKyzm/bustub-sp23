@@ -48,6 +48,10 @@ class Optimizer {
    */
   auto OptimizeNLJAsHashJoin(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
 
+  void GetKeyExprFromPredicate(const AbstractExpressionRef &predicate,
+                               std::vector<AbstractExpressionRef> &left_key_expressions,
+                               std::vector<AbstractExpressionRef> &right_key_expressions);
+
   /**
    * @brief optimize nested loop join into index join.
    */

@@ -31,8 +31,8 @@ class IndexIterator {
   IndexIterator(ReadPageGuard &&guard, int entry_idx, BufferPoolManager *bpm);
   ~IndexIterator();  // NOLINT
 
-  IndexIterator(IndexIterator &&) = default;
-  IndexIterator &operator=(IndexIterator &&) = default;
+  IndexIterator(IndexIterator &&) noexcept = default;
+  auto operator=(IndexIterator &&) noexcept -> IndexIterator & = default;
 
   auto IsEnd() -> bool;
 

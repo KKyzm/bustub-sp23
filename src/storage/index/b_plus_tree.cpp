@@ -360,8 +360,8 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key, Transaction *txn) {
 
 INDEX_TEMPLATE_ARGUMENTS
 template <typename ChildPageType>
-auto BPLUSTREE_TYPE::RedisOrMergeChildPage(WritePageGuard *parent_page_guard,
-                                           WritePageGuard *starving_page_guard) -> page_id_t {
+auto BPLUSTREE_TYPE::RedisOrMergeChildPage(WritePageGuard *parent_page_guard, WritePageGuard *starving_page_guard)
+    -> page_id_t {
   using ChildPageValueType = typename page_value_t<ChildPageType>::type;
   constexpr bool is_leaf_starving = std::is_same<ChildPageType, LeafPage>();
 
@@ -702,8 +702,9 @@ void BPLUSTREE_TYPE::ToGraph(page_id_t page_id, const BPlusTreePage *page, std::
     out << "label=<<TABLE BORDER=\"0\" CELLBORDER=\"1\" CELLSPACING=\"0\" CELLPADDING=\"4\">\n";
     // Print data
     out << "<TR><TD COLSPAN=\"" << leaf->GetSize() << "\">P=" << page_id << "</TD></TR>\n";
-    out << "<TR><TD COLSPAN=\"" << leaf->GetSize() << "\">" << "max_size=" << leaf->GetMaxSize()
-        << ",min_size=" << leaf->GetMinSize() << ",size=" << leaf->GetSize() << "</TD></TR>\n";
+    out << "<TR><TD COLSPAN=\"" << leaf->GetSize() << "\">"
+        << "max_size=" << leaf->GetMaxSize() << ",min_size=" << leaf->GetMinSize() << ",size=" << leaf->GetSize()
+        << "</TD></TR>\n";
     out << "<TR>";
     for (int i = 0; i < leaf->GetSize(); i++) {
       out << "<TD>" << leaf->KeyAt(i) << "</TD>\n";
@@ -726,8 +727,9 @@ void BPLUSTREE_TYPE::ToGraph(page_id_t page_id, const BPlusTreePage *page, std::
     out << "label=<<TABLE BORDER=\"0\" CELLBORDER=\"1\" CELLSPACING=\"0\" CELLPADDING=\"4\">\n";
     // Print data
     out << "<TR><TD COLSPAN=\"" << inner->GetSize() << "\">P=" << page_id << "</TD></TR>\n";
-    out << "<TR><TD COLSPAN=\"" << inner->GetSize() << "\">" << "max_size=" << inner->GetMaxSize()
-        << ",min_size=" << inner->GetMinSize() << ",size=" << inner->GetSize() << "</TD></TR>\n";
+    out << "<TR><TD COLSPAN=\"" << inner->GetSize() << "\">"
+        << "max_size=" << inner->GetMaxSize() << ",min_size=" << inner->GetMinSize() << ",size=" << inner->GetSize()
+        << "</TD></TR>\n";
     out << "<TR>";
     for (int i = 0; i < inner->GetSize(); i++) {
       out << "<TD PORT=\"p" << inner->ValueAt(i) << "\">";

@@ -27,7 +27,7 @@ void SeqScanExecutor::Init() {
 
 auto SeqScanExecutor::Next(Tuple *tuple, RID *rid) -> bool {
   while (true) {
-    if (table_iterator_ == nullptr || table_iterator_->IsEnd()) {
+    if (table_iterator_->IsEnd()) {
       return false;
     }
     auto next_rid = table_iterator_->GetRID();
