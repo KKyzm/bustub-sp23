@@ -12,11 +12,11 @@
 
 #pragma once
 
-#include <algorithm>
 #include <condition_variable>  // NOLINT
 #include <list>
 #include <memory>
 #include <mutex>  // NOLINT
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -72,6 +72,14 @@ class LockManager {
     txn_id_t upgrading_ = INVALID_TXN_ID;
     /** coordination */
     std::mutex latch_;
+  };
+
+  class LockUpgradeInfo {
+   public:
+    std::optional<LockMode> pre_upgrade_lock_mode;
+    std::list<LockRequest *>::const_iterator pre_upgrade_lock_request;
+
+    auto IsUpgradeRequest() -> bool { return pre_upgrade_lock_mode.has_value(); }
   };
 
   /**
@@ -310,18 +318,56 @@ class LockManager {
   TransactionManager *txn_manager_;
 
  private:
-  /** Spring 2023 */
-  /* You are allowed to modify all functions below. */
-  auto UpgradeLockTable(Transaction *txn, LockMode lock_mode, const table_oid_t &oid) -> bool;
-  auto UpgradeLockRow(Transaction *txn, LockMode lock_mode, const table_oid_t &oid, const RID &rid) -> bool;
+  auto GetTxnLockTableByLockMode(Transaction *txn,
+                                 LockMode lock_mode) -> std::shared_ptr<std::unordered_set<table_oid_t>>;
+
+  auto GetTxnLockRowByLockMode(Transaction *txn, LockMode lock_mode)
+      -> std::shared_ptr<std::unordered_map<table_oid_t, std::unordered_set<RID>>>;
+
+  void UpdateTxnLockTable(Transaction *txn, std::optional<LockMode> released_lock_mode,
+                          std::optional<LockMode> granted_lock_mode, const table_oid_t &oid);
+
+  void UpdateTxnLockRow(Transaction *txn, std::optional<LockMode> released_lock_mode,
+                        std::optional<LockMode> granted_lock_mode, const table_oid_t &oid, const RID &rid);
+
+  void UpdateTxnState(Transaction *txn, LockMode released_lock_mode);
+
+  auto GetUpgradeInfo(Transaction *txn, LockMode requested_lock_mode,
+                      const LockRequestQueue &lock_request_queue) -> LockUpgradeInfo;
+
   auto AreLocksCompatible(LockMode l1, LockMode l2) -> bool;
-  auto CanTxnTakeLock(Transaction *txn, LockMode lock_mode) -> bool;
-  void GrantNewLocksIfPossible(LockRequestQueue *lock_request_queue);
+
+  void TxnTakeLockCheck(Transaction *txn, LockMode lock_mode);
+
   auto CanLockUpgrade(LockMode curr_lock_mode, LockMode requested_lock_mode) -> bool;
-  auto CheckAppropriateLockOnTable(Transaction *txn, const table_oid_t &oid, LockMode row_lock_mode) -> bool;
+
+  void GrantNewLocksIfPossible(LockRequestQueue *lock_request_queue);
+
+  void CheckAppropriateLockOnTable(Transaction *txn, const table_oid_t &oid, LockMode row_lock_mode);
+
   auto FindCycle(txn_id_t source_txn, std::vector<txn_id_t> &path, std::unordered_set<txn_id_t> &on_path,
                  std::unordered_set<txn_id_t> &visited, txn_id_t *abort_txn_id) -> bool;
+
   void UnlockAll();
+
+  auto LockModeStr(LockMode mode) -> std::string {
+    if (mode == LockMode::SHARED) {
+      return "SHARED";
+    }
+    if (mode == LockMode::EXCLUSIVE) {
+      return "EXCLUSIVE";
+    }
+    if (mode == LockMode::INTENTION_SHARED) {
+      return "INTENTION_SHARED";
+    }
+    if (mode == LockMode::INTENTION_EXCLUSIVE) {
+      return "INTENTION_EXCLUSIVE";
+    }
+    if (mode == LockMode::SHARED_INTENTION_EXCLUSIVE) {
+      return "SHARED_INTENTION_EXCLUSIVE";
+    }
+    return "INVALID_LOCK_MODE";
+  }
 
   /** Structure that holds lock requests for a given table oid */
   std::unordered_map<table_oid_t, std::shared_ptr<LockRequestQueue>> table_lock_map_;

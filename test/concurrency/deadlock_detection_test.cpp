@@ -2,17 +2,29 @@
  * deadlock_detection_test.cpp
  */
 
-#include <atomic>
 #include <random>
 #include <thread>  // NOLINT
 
+#include <spdlog/spdlog.h>
 #include "common/config.h"
 #include "concurrency/lock_manager.h"
 #include "concurrency/transaction_manager.h"
 #include "gtest/gtest.h"
+#include "spdlog/sinks/basic_file_sink.h"
 
 namespace bustub {
-TEST(LockManagerDeadlockDetectionTest, DISABLED_EdgeTest) {
+TEST(LockManagerDeadlockDetectionTest, SimpleEdgeTest) {
+  LockManager lock_mgr{};
+  TransactionManager txn_mgr{&lock_mgr};
+  lock_mgr.txn_manager_ = &txn_mgr;
+
+  lock_mgr.AddEdge(1, 0);
+  lock_mgr.AddEdge(2, 1);
+  auto edges = lock_mgr.GetEdgeList();
+  EXPECT_EQ(2, edges.size());
+}
+
+TEST(LockManagerDeadlockDetectionTest, EdgeTest) {
   LockManager lock_mgr{};
   TransactionManager txn_mgr{&lock_mgr};
   lock_mgr.txn_manager_ = &txn_mgr;
@@ -56,7 +68,100 @@ TEST(LockManagerDeadlockDetectionTest, DISABLED_EdgeTest) {
   }
 }
 
-TEST(LockManagerDeadlockDetectionTest, DISABLED_BasicDeadlockDetectionTest) {
+TEST(LockManagerDeadlockDetectionTest, HasCycleSimpleTest1) {
+  LockManager lock_mgr{};
+  TransactionManager txn_mgr{&lock_mgr};
+  lock_mgr.txn_manager_ = &txn_mgr;
+
+  lock_mgr.AddEdge(1, 0);
+  lock_mgr.AddEdge(2, 1);
+  lock_mgr.AddEdge(3, 1);
+  lock_mgr.AddEdge(4, 1);
+  lock_mgr.AddEdge(5, 1);
+
+  auto txn_id = txn_id_t{};
+  auto has_cycle = lock_mgr.HasCycle(&txn_id);
+  EXPECT_EQ(false, has_cycle);
+}
+
+TEST(LockManagerDeadlockDetectionTest, HasCycleSimpleTest2) {
+  LockManager lock_mgr{};
+  TransactionManager txn_mgr{&lock_mgr};
+  lock_mgr.txn_manager_ = &txn_mgr;
+
+  lock_mgr.AddEdge(1, 0);
+  lock_mgr.AddEdge(2, 5);
+  lock_mgr.AddEdge(3, 5);
+  lock_mgr.AddEdge(4, 3);
+  lock_mgr.AddEdge(5, 4);
+
+  auto txn_id = txn_id_t{};
+  auto has_cycle = lock_mgr.HasCycle(&txn_id);
+  EXPECT_EQ(true, has_cycle);
+  EXPECT_EQ(5, txn_id);
+}
+
+TEST(LockManagerDeadlockDetectionTest, HasCycleTest) {
+  LockManager lock_mgr{};
+  TransactionManager txn_mgr{&lock_mgr};
+  lock_mgr.txn_manager_ = &txn_mgr;
+
+  lock_mgr.AddEdge(2, 1);
+  lock_mgr.AddEdge(3, 2);
+  // Although one txn will not wait for multiple txns, but for test purpose, we don't consider this here.
+  lock_mgr.AddEdge(1, 3);
+  lock_mgr.AddEdge(1, 12);
+  lock_mgr.AddEdge(5, 12);
+  lock_mgr.AddEdge(6, 5);
+  lock_mgr.AddEdge(9, 6);
+  lock_mgr.AddEdge(4, 9);
+  lock_mgr.AddEdge(12, 9);
+  lock_mgr.AddEdge(11, 4);
+  lock_mgr.AddEdge(9, 11);
+
+  lock_mgr.AddEdge(20, 6);
+  lock_mgr.AddEdge(12, 20);
+
+  auto txn_id = txn_id_t{};
+
+  auto has_cycle = lock_mgr.HasCycle(&txn_id);
+  EXPECT_EQ(true, has_cycle);
+  EXPECT_EQ(3, txn_id);
+  lock_mgr.RemoveEdge(3, 2);
+  lock_mgr.RemoveEdge(1, 3);
+
+  has_cycle = lock_mgr.HasCycle(&txn_id);
+  EXPECT_EQ(true, has_cycle);
+  EXPECT_EQ(11, txn_id);
+  lock_mgr.RemoveEdge(11, 4);
+  lock_mgr.RemoveEdge(9, 11);
+
+  has_cycle = lock_mgr.HasCycle(&txn_id);
+  EXPECT_EQ(true, has_cycle);
+  EXPECT_EQ(12, txn_id);
+  lock_mgr.RemoveEdge(1, 12);
+  lock_mgr.RemoveEdge(5, 12);
+  lock_mgr.RemoveEdge(12, 20);
+  lock_mgr.RemoveEdge(12, 9);
+
+  has_cycle = lock_mgr.HasCycle(&txn_id);
+  EXPECT_EQ(false, has_cycle);
+}
+
+TEST(LockManagerDeadlockDetectionTest, SetLogger) {
+  // init logger
+  static auto local_file_logger = spdlog::basic_logger_mt("basic_logger", "deadlock.log");
+  local_file_logger->set_pattern("[%H:%M:%S %z] [%!] [thread %t] %v");
+  local_file_logger->set_level(spdlog::level::debug);
+  local_file_logger->flush_on(spdlog::level::debug);
+  static auto null_logger = spdlog::basic_logger_mt("null_logger", "/dev/null");
+
+  // specify logger
+  spdlog::set_default_logger(local_file_logger);
+  // spdlog::set_default_logger(null_logger);
+}
+
+TEST(LockManagerDeadlockDetectionTest, BasicDeadlockDetectionTest) {
   LockManager lock_mgr{};
   TransactionManager txn_mgr{&lock_mgr};
   lock_mgr.txn_manager_ = &txn_mgr;
