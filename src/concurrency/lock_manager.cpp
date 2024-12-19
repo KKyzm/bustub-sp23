@@ -249,7 +249,6 @@ auto LockManager::UnlockRow(Transaction *txn, const table_oid_t &oid, const RID 
   }
 
   UpdateTxnLockRow(txn, (*iter)->lock_mode_, std::nullopt, oid, rid);
-  // NOTE: I AM NOT SURE HERE
   // if force is set to true, bypasses all 2PL checks as if the tuple is not locked
   if (!force) {
     UpdateTxnState(txn, (*iter)->lock_mode_);

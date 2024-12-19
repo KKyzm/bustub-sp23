@@ -19,6 +19,7 @@
 
 #include "catalog/catalog.h"
 #include "common/macros.h"
+#include "concurrency/transaction.h"
 #include "storage/table/table_heap.h"
 namespace bustub {
 
@@ -30,7 +31,23 @@ void TransactionManager::Commit(Transaction *txn) {
 }
 
 void TransactionManager::Abort(Transaction *txn) {
-  /* TODO: revert all the changes in write set */
+  // NOTE: only consider INSERT and DELETE operation here
+  auto table_write_set = txn->GetWriteSet();
+  for (const auto &table_write_record : *table_write_set) {
+    auto meta = table_write_record.table_heap_->GetTupleMeta(table_write_record.rid_);
+    meta.is_deleted_ = !meta.is_deleted_;
+    table_write_record.table_heap_->UpdateTupleMeta(meta, table_write_record.rid_);
+  }
+
+  auto index_write_set = txn->GetIndexWriteSet();
+  for (const auto &index_write_record : *index_write_set) {
+    auto index_info = index_write_record.catalog_->GetIndex(index_write_record.index_oid_);
+    if (index_write_record.wtype_ == WType::DELETE) {
+      index_info->index_->InsertEntry(index_write_record.tuple_, index_write_record.rid_, nullptr);
+    } else if (index_write_record.wtype_ == WType::INSERT) {
+      index_info->index_->DeleteEntry(index_write_record.tuple_, index_write_record.rid_, nullptr);
+    }
+  }
 
   ReleaseLocks(txn);
 

@@ -47,6 +47,13 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
     const TupleMeta mark_as_delete = {
         .insert_txn_id_ = INVALID_TXN_ID, .delete_txn_id_ = INVALID_TXN_ID, .is_deleted_ = true};
     table_info_->table_->UpdateTupleMeta(mark_as_delete, child_tuple_rid);
+    // maintain table write set
+    auto table_write_record = TableWriteRecord{
+        plan_->TableOid(),
+        child_tuple_rid,
+        table_info_->table_.get(),
+    };
+    GetExecutorContext()->GetTransaction()->AppendTableWriteRecord(table_write_record);
 
     // update indexes
     for (const auto index_info : table_indexes_) {
@@ -56,6 +63,12 @@ auto DeleteExecutor::Next([[maybe_unused]] Tuple *tuple, RID *rid) -> bool {
       }
       Tuple tuple_of_key_attrs = {values_of_key_attrs, index_info->index_->GetKeySchema()};
       index_info->index_->DeleteEntry(tuple_of_key_attrs, child_tuple_rid, nullptr);
+      // maintain index write set
+      auto index_write_record = IndexWriteRecord{
+          child_tuple_rid,    plan_->TableOid(),      WType::DELETE,
+          tuple_of_key_attrs, index_info->index_oid_, GetExecutorContext()->GetCatalog(),
+      };
+      GetExecutorContext()->GetTransaction()->AppendIndexWriteRecord(index_write_record);
     }
 
     count++;
