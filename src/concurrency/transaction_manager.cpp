@@ -32,13 +32,15 @@ void TransactionManager::Commit(Transaction *txn) {
 
 void TransactionManager::Abort(Transaction *txn) {
   // NOTE: only consider INSERT and DELETE operation here
+
+  // undo table operation
   auto table_write_set = txn->GetWriteSet();
   for (const auto &table_write_record : *table_write_set) {
     auto meta = table_write_record.table_heap_->GetTupleMeta(table_write_record.rid_);
     meta.is_deleted_ = !meta.is_deleted_;
     table_write_record.table_heap_->UpdateTupleMeta(meta, table_write_record.rid_);
   }
-
+  // undo index operation
   auto index_write_set = txn->GetIndexWriteSet();
   for (const auto &index_write_record : *index_write_set) {
     auto index_info = index_write_record.catalog_->GetIndex(index_write_record.index_oid_);

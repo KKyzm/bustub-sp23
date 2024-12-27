@@ -26,14 +26,22 @@ InsertExecutor::InsertExecutor(ExecutorContext *exec_ctx, const InsertPlanNode *
     : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {}
 
 void InsertExecutor::Init() {
+  auto txn = GetExecutorContext()->GetTransaction();
+  auto lock_mgr = GetExecutorContext()->GetLockManager();
+  auto table_oid = plan_->TableOid();
   table_info_ = GetExecutorContext()->GetCatalog()->GetTable(plan_->TableOid());
   table_indexes_ = GetExecutorContext()->GetCatalog()->GetTableIndexes(table_info_->name_);
-  bool success = GetExecutorContext()->GetLockManager()->LockTable(
-      GetExecutorContext()->GetTransaction(), LockManager::LockMode::INTENTION_EXCLUSIVE, plan_->TableOid());
-  if (!success) {
-    throw ExecutionException("Failed to lock table in INTENTION_EXCLUSIVE mode.");
+
+  bool already_locked = txn->IsTableExclusiveLocked(table_oid) ||
+                        txn->IsTableSharedIntentionExclusiveLocked(table_oid) ||
+                        txn->IsTableIntentionExclusiveLocked(table_oid);
+  if (!already_locked) {
+    bool success = lock_mgr->LockTable(txn, LockManager::LockMode::INTENTION_EXCLUSIVE, table_oid);
+    if (!success) {
+      throw ExecutionException("Failed to lock table in INTENTION_EXCLUSIVE mode.");
+    }
+    child_executor_->Init();
   }
-  child_executor_->Init();
 }
 
 auto InsertExecutor::Next(Tuple *tuple, RID *rid) -> bool {

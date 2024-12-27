@@ -2,14 +2,17 @@
  * lock_manager_test.cpp
  */
 
+#include <cstddef>
 #include <random>
 #include <thread>  // NOLINT
+#include <vector>
 
 #include <spdlog/logger.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/spdlog.h>
 #include "common/config.h"
 #include "concurrency/lock_manager.h"
+#include "concurrency/transaction.h"
 #include "concurrency/transaction_manager.h"
 
 #include "gtest/gtest.h"
@@ -144,6 +147,51 @@ void TableLockTest1() {
   }
 }
 TEST(LockManagerTest, TableLockTest1) { TableLockTest1(); }  // NOLINT
+
+void BlockTest(std::vector<LockManager::LockMode> modes) {
+  LockManager lock_mgr{};
+  TransactionManager txn_mgr{&lock_mgr};
+  std::vector<std::thread> threads;
+  std::vector<table_oid_t> oids = {0, 1, 2};
+
+  std::vector<Transaction *> txns;
+  for (size_t i = 0; i < modes.size(); i++) {
+    txns.push_back(txn_mgr.Begin());
+  }
+  auto lock_table = [&](size_t seq) {
+    auto mode = modes[seq];
+    auto txn = txns[seq];
+    for (auto oid : oids) {
+      EXPECT_EQ(true, lock_mgr.LockTable(txn, mode, oid));
+    }
+    // std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    for (auto oid : oids) {
+      EXPECT_EQ(true, lock_mgr.UnlockTable(txn, oid));
+    }
+  };
+
+  for (size_t seq = 0; seq < modes.size(); seq++) {
+    threads.emplace_back(lock_table, seq);
+  }
+  for (auto &thread : threads) {
+    thread.join();
+  }
+}
+
+TEST(LockManagerTest, TableBlockTest1) {
+  using LockMode = LockManager::LockMode;
+  BlockTest({LockMode::SHARED, LockMode::INTENTION_SHARED, LockMode::INTENTION_EXCLUSIVE});
+}
+
+TEST(LockManagerTest, TableBlockTest2) {
+  using LockMode = LockManager::LockMode;
+  BlockTest({LockMode::EXCLUSIVE, LockMode::INTENTION_EXCLUSIVE, LockMode::INTENTION_SHARED});
+}
+
+TEST(LockManagerTest, TableBlockTest3) {
+  using LockMode = LockManager::LockMode;
+  BlockTest({LockMode::SHARED_INTENTION_EXCLUSIVE, LockMode::EXCLUSIVE, LockMode::SHARED});
+}
 
 /** Upgrading single transaction from S -> X */
 void TableLockUpgradeTest1() {
